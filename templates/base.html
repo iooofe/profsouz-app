@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Профоюз{% endblock %}</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <header class="header">
+            <div class="header-content">
+                <h1 class="logo">Профоюз</h1>
+                <nav class="nav">
+                    {% if user.is_authenticated %}
+                        {% if user.username == 'АДМИН' or user.is_staff or user.is_superuser %}
+                        <button class="notifications-btn" onclick="showRequestsModal()" title="Запросы">
+                            <span class="notifications-icon">🔔</span>
+                            <span class="notifications-label">Запросы</span>
+                        </button>
+                        {% endif %}
+                        <div class="datetime-display" id="datetime-display">
+                            <span class="date-display" id="date-display"></span>
+                            <span class="time-display" id="time-display"></span>
+                        </div>
+                        <div class="user-info-card">
+                            <span class="user-label">пользователь:</span>
+                            <span class="user-name">{{ user.username }}</span>
+                        </div>
+                        <a href="{% url 'main:logout' %}" class="btn btn-secondary btn-sm">Выйти</a>
+                    {% endif %}
+                    {% block nav %}{% endblock %}
+                </nav>
+            </div>
+        </header>
+        
+        <main class="main-content">
+            {% block content %}{% endblock %}
+        </main>
+        
+        <footer class="footer">
+            <div class="footer-content">
+                <p>&copy; 2024 Профоюз. Все права защищены.</p>
+            </div>
+        </footer>
+    </div>
+    
+    <script src="{% static 'js/main.js' %}"></script>
+    <script src="{% static 'js/notifications.js' %}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
+

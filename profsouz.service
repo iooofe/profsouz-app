@@ -1,0 +1,21 @@
+[Unit]
+Description=Gunicorn instance to serve profsouz
+After=network.target
+
+[Service]
+User=profsouz
+Group=profsouz
+WorkingDirectory=/home/profsouz/profsouz
+Environment="PATH=/home/profsouz/venv/bin"
+EnvironmentFile=/home/profsouz/profsouz/.env
+ExecStart=/home/profsouz/venv/bin/gunicorn \
+    --workers 3 \
+    --bind unix:/home/profsouz/profsouz/gunicorn.sock \
+    --timeout 120 \
+    --access-logfile /home/profsouz/logs/access.log \
+    --error-logfile /home/profsouz/logs/error.log \
+    profsouz.wsgi:application
+
+[Install]
+WantedBy=multi-user.target
+

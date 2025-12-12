@@ -1,0 +1,428 @@
+{% extends 'base.html' %}
+
+{% block title %}Редактировать работника - Профоюз{% endblock %}
+
+{% block content %}
+<div class="edit-container">
+    <div class="edit-header">
+        <h1>Редактировать работника</h1>
+        <a href="{% url 'main:index' %}?tab=workers" class="btn btn-secondary">← Назад</a>
+    </div>
+    
+    <div class="worker-form-container">
+        <form method="post" class="worker-form" id="worker-form" enctype="multipart/form-data">
+            {% csrf_token %}
+            
+            {% if worker_form.non_field_errors %}
+                <div class="form-errors">
+                    {% for error in worker_form.non_field_errors %}
+                        <div class="message message-error">{{ error }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+            
+            <div class="form-section">
+                <h4 class="form-subtitle">Основная информация</h4>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.full_name.label }} *</label>
+                        {{ worker_form.full_name }}
+                        {{ worker_form.full_name.errors }}
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.personnel_number.label }} *</label>
+                        {{ worker_form.personnel_number }}
+                        {{ worker_form.personnel_number.errors }}
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.inn.label }}</label>
+                        {{ worker_form.inn }}
+                        {{ worker_form.inn.errors }}
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.status.label }} *</label>
+                        {{ worker_form.status }}
+                        {{ worker_form.status.errors }}
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.is_union_member.label }} *</label>
+                        {{ worker_form.is_union_member }}
+                        {{ worker_form.is_union_member.errors }}
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.department.label }} *</label>
+                        {{ worker_form.department }}
+                        {{ worker_form.department.errors }}
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.position.label }} *</label>
+                        {{ worker_form.position }}
+                        {{ worker_form.position.errors }}
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.is_contract_member.label }} *</label>
+                        {{ worker_form.is_contract_member }}
+                        {{ worker_form.is_contract_member.errors }}
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-section">
+                <h4 class="form-subtitle">Контактная информация</h4>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.phone.label }}</label>
+                        {{ worker_form.phone }}
+                        {{ worker_form.phone.errors }}
+                    </div>
+                    <div class="form-group form-group-full">
+                        <label class="form-label">{{ worker_form.address.label }}</label>
+                        {{ worker_form.address }}
+                        {{ worker_form.address.errors }}
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-section">
+                <h4 class="form-subtitle">Удостоверение личности</h4>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.id_number.label }}</label>
+                        {{ worker_form.id_number }}
+                        {{ worker_form.id_number.errors }}
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.id_issue_date.label }}</label>
+                        {{ worker_form.id_issue_date }}
+                        {{ worker_form.id_issue_date.errors }}
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.id_issued_by.label }}</label>
+                        {{ worker_form.id_issued_by }}
+                        {{ worker_form.id_issued_by.errors }}
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-section" id="pensioner-fields" style="display: none;">
+                <h4 class="form-subtitle">Информация для пенсионеров</h4>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.has_benefits.label }}</label>
+                        {{ worker_form.has_benefits }}
+                        {{ worker_form.has_benefits.errors }}
+                    </div>
+                    <div class="form-group" id="benefits-name-group" style="display: none;">
+                        <label class="form-label">{{ worker_form.benefits_name.label }}</label>
+                        {{ worker_form.benefits_name }}
+                        {{ worker_form.benefits_name.errors }}
+                    </div>
+                    <div class="form-group" id="benefits-file-group" style="display: none;">
+                        <label class="form-label">{{ worker_form.benefits_file.label }}</label>
+                        {{ worker_form.benefits_file }}
+                        {{ worker_form.benefits_file.errors }}
+                        {% if worker.benefits_file %}
+                        <div style="margin-top: 8px;">
+                            <a href="{% url 'main:download_worker_file' worker.id 'benefits' %}" class="btn btn-secondary" style="display: inline-block; text-decoration: none; padding: 6px 12px; font-size: 14px;">
+                                📥 Скачать текущий файл
+                            </a>
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.has_miner_glory.label }}</label>
+                        {{ worker_form.has_miner_glory }}
+                        {{ worker_form.has_miner_glory.errors }}
+                    </div>
+                    <div class="form-group" id="miner-glory-file-group" style="display: none;">
+                        <label class="form-label">{{ worker_form.miner_glory_file.label }}</label>
+                        {{ worker_form.miner_glory_file }}
+                        {{ worker_form.miner_glory_file.errors }}
+                        {% if worker.miner_glory_file %}
+                        <div style="margin-top: 8px;">
+                            <a href="{% url 'main:download_worker_file' worker.id 'miner_glory' %}" class="btn btn-secondary" style="display: inline-block; text-decoration: none; padding: 6px 12px; font-size: 14px;">
+                                📥 Скачать текущий файл
+                            </a>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% if worker.status == 'pensioner' %}
+                    <div class="form-group">
+                        <label class="form-label">{{ worker_form.is_dead.label }}</label>
+                        {{ worker_form.is_dead }}
+                        {{ worker_form.is_dead.errors }}
+                    </div>
+                    <div class="form-group" id="death-certificate-file-group" style="display: {% if worker.is_dead %}block{% else %}none{% endif %};">
+                        <label class="form-label">{{ worker_form.death_certificate_file.label }}</label>
+                        {{ worker_form.death_certificate_file }}
+                        {{ worker_form.death_certificate_file.errors }}
+                        {% if worker.death_certificate_file %}
+                        <div style="margin-top: 8px;">
+                            <a href="{% url 'main:download_worker_file' worker.id 'death_certificate' %}" class="btn btn-secondary" style="display: inline-block; text-decoration: none; padding: 6px 12px; font-size: 14px;">
+                                📥 Скачать текущий файл
+                            </a>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <div class="form-section">
+                <h4 class="form-subtitle">Члены семьи</h4>
+                <div id="family-members-container">
+                    {% for member in family_members %}
+                    <div class="family-member-item" data-index="{{ forloop.counter0 }}">
+                        <div class="family-member-header">
+                            <h5>Член семьи #{{ forloop.counter }}</h5>
+                            <button type="button" class="btn-remove-family" onclick="removeFamilyMember(this)">✕</button>
+                        </div>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label class="form-label">ФИО</label>
+                                <input type="text" name="family_{{ forloop.counter0 }}_full_name" class="form-input" value="{{ member.full_name }}" placeholder="ФИО">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Степень родства</label>
+                                <select name="family_{{ forloop.counter0 }}_relationship" class="form-input">
+                                    <option value="">Выберите</option>
+                                    <option value="spouse" {% if member.relationship == 'spouse' %}selected{% endif %}>Супруг(а)</option>
+                                    <option value="child" {% if member.relationship == 'child' %}selected{% endif %}>Ребенок</option>
+                                    <option value="parent" {% if member.relationship == 'parent' %}selected{% endif %}>Родитель</option>
+                                    <option value="sibling" {% if member.relationship == 'sibling' %}selected{% endif %}>Брат/Сестра</option>
+                                    <option value="other" {% if member.relationship == 'other' %}selected{% endif %}>Другое</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Удостоверение личности</label>
+                                <input type="text" name="family_{{ forloop.counter0 }}_id_number" class="form-input" value="{{ member.id_number }}" placeholder="Номер удостоверения">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Дата выдачи удо</label>
+                                <input type="date" name="family_{{ forloop.counter0 }}_id_issue_date" class="form-input" value="{% if member.id_issue_date %}{{ member.id_issue_date|date:'Y-m-d' }}{% endif %}">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Кем выдано удо</label>
+                                <input type="text" name="family_{{ forloop.counter0 }}_id_issued_by" class="form-input" value="{{ member.id_issued_by }}" placeholder="Кем выдано">
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                    {% if not family_members %}
+                    <div class="family-member-item" data-index="0">
+                        <div class="family-member-header">
+                            <h5>Член семьи #1</h5>
+                            <button type="button" class="btn-remove-family" onclick="removeFamilyMember(this)">✕</button>
+                        </div>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label class="form-label">ФИО</label>
+                                <input type="text" name="family_0_full_name" class="form-input" placeholder="ФИО">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Степень родства</label>
+                                <select name="family_0_relationship" class="form-input">
+                                    <option value="">Выберите</option>
+                                    <option value="spouse">Супруг(а)</option>
+                                    <option value="child">Ребенок</option>
+                                    <option value="parent">Родитель</option>
+                                    <option value="sibling">Брат/Сестра</option>
+                                    <option value="other">Другое</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Удостоверение личности</label>
+                                <input type="text" name="family_0_id_number" class="form-input" placeholder="Номер удостоверения">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Дата выдачи удо</label>
+                                <input type="date" name="family_0_id_issue_date" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Кем выдано удо</label>
+                                <input type="text" name="family_0_id_issued_by" class="form-input" placeholder="Кем выдано">
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                <button type="button" class="btn btn-secondary" id="add-family-member">+ Добавить члена семьи</button>
+                <input type="hidden" name="family_count" id="family_count" value="{% if family_members %}{{ family_members|length }}{% else %}1{% endif %}">
+            </div>
+            
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Сохранить изменения</button>
+                <a href="{% url 'main:index' %}?tab=workers" class="btn btn-secondary">Отмена</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Phone mask
+        const phoneInputs = document.querySelectorAll('input[type="tel"]');
+        phoneInputs.forEach(input => {
+            input.addEventListener('input', function(e) {
+                let value = e.target.value.replace(/\D/g, '');
+                if (value.startsWith('8')) {
+                    value = '7' + value.substring(1);
+                }
+                if (value.startsWith('7') && value.length === 11) {
+                    e.target.value = '+7 (' + value.substring(1, 4) + ') ' + value.substring(4, 7) + '-' + value.substring(7, 9) + '-' + value.substring(9, 11);
+                } else if (value.length > 0) {
+                    e.target.value = '+' + value;
+                }
+            });
+        });
+        
+        // INN validation
+        const innInputs = document.querySelectorAll('input[name*="inn"]');
+        innInputs.forEach(input => {
+            input.addEventListener('input', function(e) {
+                e.target.value = e.target.value.replace(/\D/g, '').substring(0, 12);
+            });
+        });
+        
+        // Показ/скрытие полей для пенсионеров
+        const statusSelect = document.querySelector('select[name="status"]');
+        const pensionerFields = document.getElementById('pensioner-fields');
+        const benefitsNameGroup = document.getElementById('benefits-name-group');
+        const benefitsFileGroup = document.getElementById('benefits-file-group');
+        const minerGloryFileGroup = document.getElementById('miner-glory-file-group');
+        const deathCertificateFileGroup = document.getElementById('death-certificate-file-group');
+        const hasBenefitsSelect = document.querySelector('select[name="has_benefits"]');
+        const hasMinerGlorySelect = document.querySelector('select[name="has_miner_glory"]');
+        const isDeadSelect = document.querySelector('select[name="is_dead"]');
+        
+        function togglePensionerFields() {
+            if (statusSelect && pensionerFields) {
+                if (statusSelect.value === 'pensioner') {
+                    pensionerFields.style.display = 'block';
+                } else {
+                    pensionerFields.style.display = 'none';
+                }
+            }
+        }
+        
+        function toggleDeathCertificateFields() {
+            if (isDeadSelect && deathCertificateFileGroup) {
+                if (isDeadSelect.value === 'True') {
+                    deathCertificateFileGroup.style.display = 'block';
+                } else {
+                    deathCertificateFileGroup.style.display = 'none';
+                }
+            }
+        }
+        
+        function toggleBenefitsFields() {
+            if (hasBenefitsSelect && benefitsNameGroup && benefitsFileGroup) {
+                if (hasBenefitsSelect.value === 'True') {
+                    benefitsNameGroup.style.display = 'block';
+                    benefitsFileGroup.style.display = 'block';
+                } else {
+                    benefitsNameGroup.style.display = 'none';
+                    benefitsFileGroup.style.display = 'none';
+                }
+            }
+        }
+        
+        function toggleMinerGloryFields() {
+            if (hasMinerGlorySelect && minerGloryFileGroup) {
+                if (hasMinerGlorySelect.value === 'True') {
+                    minerGloryFileGroup.style.display = 'block';
+                } else {
+                    minerGloryFileGroup.style.display = 'none';
+                }
+            }
+        }
+        
+        if (statusSelect) {
+            statusSelect.addEventListener('change', togglePensionerFields);
+            togglePensionerFields(); // Вызываем при загрузке
+        }
+        
+        if (hasBenefitsSelect) {
+            hasBenefitsSelect.addEventListener('change', toggleBenefitsFields);
+            toggleBenefitsFields(); // Вызываем при загрузке
+        }
+        
+        if (hasMinerGlorySelect) {
+            hasMinerGlorySelect.addEventListener('change', toggleMinerGloryFields);
+            toggleMinerGloryFields(); // Вызываем при загрузке
+        }
+        
+        if (isDeadSelect) {
+            isDeadSelect.addEventListener('change', toggleDeathCertificateFields);
+            toggleDeathCertificateFields(); // Вызываем при загрузке
+        }
+        
+        // Add family member
+        const addFamilyBtn = document.getElementById('add-family-member');
+        const familyContainer = document.getElementById('family-members-container');
+        const familyCountInput = document.getElementById('family_count');
+        let familyIndex = parseInt(familyCountInput.value) || 0;
+        
+        if (addFamilyBtn && familyContainer) {
+            addFamilyBtn.addEventListener('click', function() {
+                const newMember = document.createElement('div');
+                newMember.className = 'family-member-item';
+                newMember.setAttribute('data-index', familyIndex);
+                newMember.innerHTML = `
+                    <div class="family-member-header">
+                        <h5>Член семьи #${familyIndex + 1}</h5>
+                        <button type="button" class="btn-remove-family" onclick="removeFamilyMember(this)">✕</button>
+                    </div>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">ФИО</label>
+                            <input type="text" name="family_${familyIndex}_full_name" class="form-input" placeholder="ФИО">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Степень родства</label>
+                            <select name="family_${familyIndex}_relationship" class="form-input">
+                                <option value="">Выберите</option>
+                                <option value="spouse">Супруг(а)</option>
+                                <option value="child">Ребенок</option>
+                                <option value="parent">Родитель</option>
+                                <option value="sibling">Брат/Сестра</option>
+                                <option value="other">Другое</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Удостоверение личности</label>
+                            <input type="text" name="family_${familyIndex}_id_number" class="form-input" placeholder="Номер удостоверения">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Дата выдачи удо</label>
+                            <input type="date" name="family_${familyIndex}_id_issue_date" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Кем выдано удо</label>
+                            <input type="text" name="family_${familyIndex}_id_issued_by" class="form-input" placeholder="Кем выдано">
+                        </div>
+                    </div>
+                `;
+                familyContainer.appendChild(newMember);
+                familyIndex++;
+                familyCountInput.value = familyIndex;
+            });
+        }
+    });
+    
+    function removeFamilyMember(btn) {
+        const memberItem = btn.closest('.family-member-item');
+        if (memberItem) {
+            memberItem.remove();
+            const familyCountInput = document.getElementById('family_count');
+            if (familyCountInput) {
+                const remaining = document.querySelectorAll('.family-member-item').length;
+                familyCountInput.value = remaining;
+            }
+        }
+    }
+</script>
+{% endblock %}
+
