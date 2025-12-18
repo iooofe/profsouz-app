@@ -1,14 +1,14 @@
 from django import forms
+from django.contrib.auth.models import User
 from .models import Worker, FamilyMember, VacationRequest, MaterialAssistanceRequest, CoalRequest, FuneralRequest
 
 
 class LoginForm(forms.Form):
-    username = forms.CharField(
-        label='Логин',
-        widget=forms.TextInput(attrs={
+    username = forms.ChoiceField(
+        label='Аккаунт',
+        choices=[],
+        widget=forms.Select(attrs={
             'class': 'form-input',
-            'placeholder': 'Введите логин',
-            'autocomplete': 'username',
         })
     )
     password = forms.CharField(
@@ -19,6 +19,12 @@ class LoginForm(forms.Form):
             'autocomplete': 'current-password',
         })
     )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Подтягиваем все аккаунты из базы и заполняем выпадающий список
+        users = User.objects.all().order_by('username')
+        self.fields['username'].choices = [(u.username, u.username) for u in users]
 
 
 class FamilyMemberForm(forms.ModelForm):
@@ -45,6 +51,15 @@ class FamilyMemberForm(forms.ModelForm):
                 'class': 'form-input',
                 'placeholder': 'Кем выдано',
             }),
+            'has_benefits': forms.Select(attrs={
+                'class': 'form-input',
+            }),
+            'has_miner_glory': forms.Select(attrs={
+                'class': 'form-input',
+            }),
+            'is_dead': forms.Select(attrs={
+                'class': 'form-input',
+            }),
         }
 
 
@@ -57,7 +72,7 @@ class WorkerForm(forms.ModelForm):
             'phone', 'address', 'id_number', 'id_issue_date', 'id_issued_by',
             'has_benefits', 'benefits_file', 'benefits_name',
             'has_miner_glory', 'miner_glory_file',
-            'house_passport_file', 'pensioner_id_file', 'account_20_digit',
+            'house_passport_file', 'pensioner_id_file', 'account_20_digit', 'current_account',
             'is_dead', 'death_certificate_file'
         ]
         widgets = {
@@ -169,8 +184,8 @@ class CoalRequestForm(forms.ModelForm):
             }),
             'account_number': forms.TextInput(attrs={
                 'class': 'form-input',
-                'placeholder': 'KZ12345678901234567890',
-                'maxlength': '22',
+                'placeholder': 'KZ1234567890123456780',
+                'maxlength': '20',
             }),
         }
     
@@ -178,17 +193,18 @@ class CoalRequestForm(forms.ModelForm):
         account_number = self.cleaned_data.get('account_number')
         account_type = self.cleaned_data.get('account_type')
         
-        if account_type == '20_digit':
+        # Для любого типа счета требуется IBAN формата KZ + 18 цифр
+        if account_type:
             if not account_number:
-                raise forms.ValidationError('Необходимо указать номер 20-значного счета')
+                raise forms.ValidationError('Необходимо указать номер счета')
             if not account_number.startswith('KZ'):
                 raise forms.ValidationError('Номер счета должен начинаться с KZ')
-            if len(account_number) != 22:
-                raise forms.ValidationError('Номер счета должен содержать KZ и 20 цифр (всего 22 символа)')
+            if len(account_number) != 20:
+                raise forms.ValidationError('Номер счета должен содержать KZ и 18 цифр (всего 20 символов)')
             # Проверяем, что после KZ идут только цифры
             digits = account_number[2:]
-            if not digits.isdigit():
-                raise forms.ValidationError('После KZ должны быть только цифры')
+            if not digits.isdigit() or len(digits) != 18:
+                raise forms.ValidationError('После KZ должны быть только 18 цифр')
         
         return account_number
 
@@ -217,8 +233,8 @@ class FuneralRequestForm(forms.ModelForm):
             }),
             'account_number': forms.TextInput(attrs={
                 'class': 'form-input',
-                'placeholder': 'KZ12345678901234567890',
-                'maxlength': '22',
+                'placeholder': 'KZ1234567890123456780',
+                'maxlength': '20',
             }),
         }
     
@@ -236,16 +252,17 @@ class FuneralRequestForm(forms.ModelForm):
         account_number = self.cleaned_data.get('account_number')
         account_type = self.cleaned_data.get('account_type')
         
-        if account_type == '20_digit':
+        # Для любого типа счета требуется IBAN формата KZ + 18 цифр
+        if account_type:
             if not account_number:
-                raise forms.ValidationError('Необходимо указать номер 20-значного счета')
+                raise forms.ValidationError('Необходимо указать номер счета')
             if not account_number.startswith('KZ'):
                 raise forms.ValidationError('Номер счета должен начинаться с KZ')
-            if len(account_number) != 22:
-                raise forms.ValidationError('Номер счета должен содержать KZ и 20 цифр (всего 22 символа)')
+            if len(account_number) != 20:
+                raise forms.ValidationError('Номер счета должен содержать KZ и 18 цифр (всего 20 символов)')
             # Проверяем, что после KZ идут только цифры
             digits = account_number[2:]
-            if not digits.isdigit():
-                raise forms.ValidationError('После KZ должны быть только цифры')
+            if not digits.isdigit() or len(digits) != 18:
+                raise forms.ValidationError('После KZ должны быть только 18 цифр')
         
         return account_number

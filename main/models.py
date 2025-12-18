@@ -77,10 +77,11 @@ class Worker(models.Model):
     benefits_name = models.CharField('Название льготы', max_length=200, blank=True)
     has_miner_glory = models.BooleanField('Шахтерская слава или трудовая слава', choices=YES_NO_CHOICES, default=False, null=True, blank=True)
     miner_glory_file = models.FileField('Файл подтверждающий шахтерскую/трудовую славу', upload_to='miner_glory/', null=True, blank=True)
-    # Поля для заявления на уголь
+    # Поля для заявления на уголь / счетов
     house_passport_file = models.FileField('Копия технического паспорта дома', upload_to='coal/passports/', null=True, blank=True)
     pensioner_id_file = models.FileField('Копия удостоверения пенсионера', upload_to='coal/pensioner_ids/', null=True, blank=True)
-    account_20_digit = models.CharField('20-значный счет', max_length=25, blank=True)  # KZ + 20 цифр = 22 символа
+    account_20_digit = models.CharField('Карточный счет (KZ + 18 цифр)', max_length=25, blank=True)  # KZ + 18 цифр = 20 символов
+    current_account = models.CharField('Текущий счет (KZ + 18 цифр)', max_length=25, blank=True)
     # Поля для заявления на погребение
     is_dead = models.BooleanField('Пенсионер мертв?', choices=YES_NO_CHOICES, default=False, null=True, blank=True)
     death_certificate_file = models.FileField('Справка о смерти', upload_to='funeral/death_certificates/', null=True, blank=True)
@@ -252,7 +253,7 @@ class MaterialAssistanceRequest(models.Model):
 class CoalRequest(models.Model):
     """Заявление на денежную компенсацию за льготный уголь"""
     ACCOUNT_TYPE_CHOICES = [
-        ('20_digit', '20-ти значный счет'),
+        ('20_digit', 'Карточный счет'),
         ('current', 'Текущий счет'),
     ]
     
@@ -278,7 +279,7 @@ class CoalRequest(models.Model):
 class FuneralRequest(models.Model):
     """Заявление на погребение пенсионеров"""
     ACCOUNT_TYPE_CHOICES = [
-        ('20_digit', '20-ти значный счет'),
+        ('20_digit', 'Карточный счет'),
         ('current', 'Текущий счет'),
     ]
     

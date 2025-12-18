@@ -6,9 +6,10 @@ class Command(BaseCommand):
     help = 'Создает предустановленных пользователей для системы'
 
     def handle(self, *args, **options):
+        # Усложненные пароли без спецсимволов (латиница с заглавными буквами и цифры)
         users_data = [
             ('КПТУ', 'change-me'),
-            ('Уттs', 'change-me'),
+            ('УТТ', 'change-me'),
             ('Ш. Ленина', 'change-me'),
             ('Ш. Казахстанская', 'change-me'),
             ('ш. Костенко', 'change-me'),

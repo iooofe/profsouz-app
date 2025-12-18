@@ -8,8 +8,8 @@ echo "🚀 Начало полного развертывания проекта
 
 # Переменные
 PROJECT_DIR="/var/www/profsouz"
-DOMAIN="profsouz.com"
-WWW_DOMAIN="www.profsouz.com"
+DOMAIN="profsouz.kz"
+WWW_DOMAIN="www.profsouz.kz"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 
 # Шаг 1: Обновление системы
@@ -67,7 +67,8 @@ pip install -r requirements.txt
 
 # Шаг 7: Генерация SECRET_KEY и создание .env
 echo "🔑 Генерация SECRET_KEY..."
-SECRET_KEY=$(python3 -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())")
+source $VENV_DIR/bin/activate
+SECRET_KEY=$(python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())")
 
 echo "⚙️  Создание файла .env..."
 cat > $PROJECT_DIR/.env << EOF
@@ -79,55 +80,104 @@ EOF
 
 # Шаг 8: Применение миграций
 echo "🗄️  Применение миграций базы данных..."
+source $VENV_DIR/bin/activate
 python manage.py migrate
 
 # Шаг 9: Создание пользователей
 echo "👤 Создание пользователей системы..."
+source $VENV_DIR/bin/activate
 python manage.py create_users
 
-# Шаг 10: Сбор статических файлов
+# Шаг 9.5: Импорт работников из файлов
+echo "👥 Импорт работников из файлов..."
+source $VENV_DIR/bin/activate
+if [ -d "$PROJECT_DIR/работники" ] || [ -d "$PROJECT_DIR/работники " ]; then
+    python manage.py import_workers_from_files
+    echo "✅ Импорт работников завершен"
+else
+    echo "⚠️  Папка 'работники' не найдена, пропускаю импорт"
+fi
+
+# Шаг 10: Создание необходимых директорий (до collectstatic)
+echo "📁 Создание необходимых директорий..."
+mkdir -p $PROJECT_DIR/media
+mkdir -p $PROJECT_DIR/staticfiles
+
+# Шаг 11: Сбор статических файлов
 echo "📦 Сбор статических файлов..."
+source $VENV_DIR/bin/activate
 python manage.py collectstatic --noinput
 
-# Шаг 11: Установка прав доступа
+# Шаг 12: Установка прав доступа
 echo "🔐 Настройка прав доступа..."
 chown -R www-data:www-data $PROJECT_DIR
 chmod -R 755 $PROJECT_DIR
-chmod -R 775 $PROJECT_DIR/media
-chmod -R 775 $PROJECT_DIR/staticfiles
+# Убедимся, что директории существуют перед установкой специальных прав
+if [ -d "$PROJECT_DIR/media" ]; then
+    chmod -R 775 $PROJECT_DIR/media
+fi
+if [ -d "$PROJECT_DIR/staticfiles" ]; then
+    chmod -R 775 $PROJECT_DIR/staticfiles
+fi
 
-# Шаг 12: Настройка Nginx
+# Шаг 13: Настройка Nginx
 echo "🌐 Настройка Nginx..."
 cp $PROJECT_DIR/nginx_profsouz.conf /etc/nginx/sites-available/profsouz
 ln -sf /etc/nginx/sites-available/profsouz /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 
 # Проверка конфигурации Nginx
-nginx -t
+if ! nginx -t; then
+    echo "❌ Ошибка в конфигурации Nginx!"
+    exit 1
+fi
 
-# Шаг 13: Создание директории для логов Gunicorn
+# Шаг 14: Создание директории для логов Gunicorn
 echo "📝 Создание директорий для логов..."
 mkdir -p /var/log/gunicorn
+chown www-data:www-data /var/log/gunicorn
 
-# Шаг 14: Настройка Supervisor для Gunicorn
+# Шаг 15: Настройка Supervisor для Gunicorn
 echo "⚙️  Настройка Supervisor..."
 cp $PROJECT_DIR/gunicorn_profsouz.conf /etc/supervisor/conf.d/profsouz.conf
 
-# Шаг 15: Запуск сервисов
+# Шаг 16: Запуск сервисов
 echo "🚀 Запуск сервисов..."
 systemctl restart nginx
+if ! systemctl is-active --quiet nginx; then
+    echo "❌ Nginx не запустился!"
+    systemctl status nginx
+    exit 1
+fi
+
 supervisorctl reread
 supervisorctl update
+sleep 2
 supervisorctl start profsouz || supervisorctl restart profsouz
 
-# Шаг 16: Получение SSL сертификата
+# Проверка статуса Gunicorn
+sleep 3
+if ! supervisorctl status profsouz | grep -q RUNNING; then
+    echo "❌ Gunicorn не запустился!"
+    supervisorctl status profsouz
+    echo "Проверьте логи: supervisorctl tail profsouz stderr"
+    exit 1
+fi
+
+# Шаг 17: Получение SSL сертификата (опционально)
 echo "🔒 Получение SSL сертификата..."
-echo "⚠️  ВАЖНО: SSL сертификат будет запрошен автоматически"
-echo "Если домен уже указывает на этот сервер, выполните:"
+echo "⚠️  ВАЖНО: SSL сертификат будет запрошен автоматически, если домен указывает на сервер"
+echo "Если домен еще не настроен, получите сертификат позже командой:"
 echo "certbot --nginx -d $DOMAIN -d $WWW_DOMAIN --non-interactive --agree-tos --email admin@$DOMAIN"
 
 # Попытка автоматического получения сертификата (может не сработать если домен еще не указывает на сервер)
-certbot --nginx -d $DOMAIN -d $WWW_DOMAIN --non-interactive --agree-tos --email admin@$DOMAIN 2>&1 || echo "⚠️  Не удалось получить сертификат автоматически. Убедитесь, что домен указывает на этот сервер."
+if certbot --nginx -d $DOMAIN -d $WWW_DOMAIN --non-interactive --agree-tos --email admin@$DOMAIN 2>&1; then
+    echo "✅ SSL сертификат успешно получен!"
+    systemctl reload nginx
+else
+    echo "⚠️  Не удалось получить сертификат автоматически. Убедитесь, что домен указывает на этот сервер."
+    echo "Выполните позже: certbot --nginx -d $DOMAIN -d $WWW_DOMAIN --non-interactive --agree-tos --email admin@$DOMAIN"
+fi
 
 echo ""
 echo "✅ Развертывание завершено!"

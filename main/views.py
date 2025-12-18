@@ -194,10 +194,11 @@ def index(request):
         coal_requests = CoalRequest.objects.all().select_related('worker', 'user').order_by('-created_at')
         funeral_requests = FuneralRequest.objects.all().select_related('worker', 'user').order_by('-created_at')
     else:
-        vacation_requests = VacationRequest.objects.filter(user=request.user).select_related('worker').prefetch_related('family_members').order_by('-created_at')
-        material_assistance_requests = MaterialAssistanceRequest.objects.filter(user=request.user).select_related('worker').order_by('-created_at')
-        coal_requests = CoalRequest.objects.filter(user=request.user).select_related('worker').order_by('-created_at')
-        funeral_requests = FuneralRequest.objects.filter(user=request.user).select_related('worker').order_by('-created_at')
+        # Показываем все заявления работников, принадлежащих текущему пользователю
+        vacation_requests = VacationRequest.objects.filter(worker__user=request.user).select_related('worker').prefetch_related('family_members').order_by('-created_at')
+        material_assistance_requests = MaterialAssistanceRequest.objects.filter(worker__user=request.user).select_related('worker').order_by('-created_at')
+        coal_requests = CoalRequest.objects.filter(worker__user=request.user).select_related('worker').order_by('-created_at')
+        funeral_requests = FuneralRequest.objects.filter(worker__user=request.user).select_related('worker').order_by('-created_at')
     
     # Получаем информацию о лимите (для админа лимит не нужен)
     if user_is_admin:
@@ -374,7 +375,7 @@ def worker_detail(request, worker_id):
         worker = get_object_or_404(Worker, id=worker_id, user=request.user)
     
     family_members = worker.family_members.all()
-    
+
     data = {
         'id': worker.id,
         'full_name': worker.full_name,
@@ -402,6 +403,7 @@ def worker_detail(request, worker_id):
         'pensioner_id_file': worker.pensioner_id_file.url if worker.pensioner_id_file else None,
         'pensioner_id_file_name': worker.pensioner_id_file.name.split('/')[-1] if worker.pensioner_id_file else None,
         'account_20_digit': worker.account_20_digit or '—',
+        'current_account': worker.current_account or '—',
         'is_dead': 'Да' if worker.is_dead else 'Нет',
         'death_certificate_file': worker.death_certificate_file.url if worker.death_certificate_file else None,
         'death_certificate_file_name': worker.death_certificate_file.name.split('/')[-1] if worker.death_certificate_file else None,
@@ -489,8 +491,8 @@ def worker_delete(request, worker_id):
 
 @login_required
 def search_workers(request):
-    """Поиск работников для автодополнения"""
-    query = request.GET.get('q', '')
+    """Поиск работников для автодополнения и таблицы"""
+    query = request.GET.get('q', '').strip()
     user_is_admin = is_admin(request.user)
     
     # Для админа показываем всех работников, для обычного пользователя - только своих
@@ -500,25 +502,50 @@ def search_workers(request):
         workers = Worker.objects.filter(user=request.user)
     
     if query:
+        # Ищем по ФИО, табельному номеру, ИИН, участку, должности, телефону
         workers = workers.filter(
             Q(full_name__icontains=query) |
-            Q(personnel_number__icontains=query)
-        )[:10]
+            Q(personnel_number__icontains=query) |
+            Q(inn__icontains=query) |
+            Q(department__icontains=query) |
+            Q(position__icontains=query) |
+            Q(phone__icontains=query)
+        )
+    else:
+        # Если запрос пустой, возвращаем всех работников (для обновления таблицы)
+        pass
     
-    results = [
-        {
+    # Ограничиваем количество для автодополнения, но не для таблицы
+    # Если запрос есть - это автодополнение, если нет - это обновление таблицы
+    if query:
+        workers = workers[:20]
+    
+    results = []
+    for worker in workers:
+        # Аккуратно получаем логин пользователя, т.к. у части работников user может быть пустым
+        user_account = None
+        if user_is_admin and getattr(worker, 'user', None):
+            user_account = worker.user.username
+        
+        results.append({
             'id': worker.id,
             'full_name': worker.full_name,
             'personnel_number': worker.personnel_number,
-            'department': worker.department,
-            'position': worker.position,
+            'inn': worker.inn or '',
             'status': worker.status,
-            'is_dead': bool(worker.is_dead),
             'status_display': worker.get_status_display(),
-            'user_account': worker.user.username if user_is_admin else None,  # Аккаунт для админа
-        }
-        for worker in workers
-    ]
+            'department': worker.department or '',
+            'position': worker.position or '',
+            'phone': worker.phone or '',
+            'is_dead': bool(worker.is_dead),
+            'user_account': user_account,  # Аккаунт для админа (если есть связь с User)
+            # Подсказки по счетам из карточки работника
+            'card_account': getattr(worker, 'account_20_digit', '') or '',
+            'current_account': getattr(worker, 'current_account', '') or '',
+            # Подсказки по счетам из карточки работника
+            'card_account': getattr(worker, 'account_20_digit', '') or '',
+            'current_account': getattr(worker, 'current_account', '') or '',
+        })
     
     return JsonResponse({'results': results})
 
@@ -648,38 +675,8 @@ def create_vacation_request(request):
                 vacation.save()
             
             messages.success(request, f'Заявление на путевку для {worker.full_name} успешно создано!')
-            
-            # Автоматически скачиваем печатное заявление для всех курортов
-            try:
-                # Выбираем шаблон в зависимости от курорта
-                if resort in ['zhartas', 'shakhter']:
-                    buffer = generate_vacation_request_docx(vacation)
-                else:
-                    # Для остальных курортов (Орленок, Балхаш, Дискавери) используем стандартный шаблон
-                    buffer = generate_vacation_request_docx_standard(vacation)
-                
-                # Формируем ответ с файлом
-                response = HttpResponse(
-                    buffer.getvalue(),
-                    content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-                )
-                resort_name = vacation.get_resort_display()
-                # Убираем пробелы из имени файла
-                worker_name_clean = worker.full_name.replace(' ', '_')
-                filename = f"Заявление_на_путевку_{resort_name}_{worker_name_clean}_{vacation.start_date.strftime('%d.%m.%Y')}.docx"
-                # Правильная кодировка имени файла для кириллицы
-                # Используем транслитерацию для максимальной совместимости с браузерами
-                safe_filename = transliterate_filename(filename)
-                # Используем только транслитерированное имя для гарантированной работы во всех браузерах
-                response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
-                return response
-            except Exception as doc_error:
-                # Если ошибка при генерации документа, логируем и редиректим
-                import traceback
-                print(f"DEBUG: Ошибка при генерации документа для курорта {resort}: {str(doc_error)}")
-                print(f"DEBUG: Traceback: {traceback.format_exc()}")
-                messages.warning(request, f'Заявление создано, но не удалось сгенерировать файл. Вы можете скачать его позже из списка заявлений.')
-            return redirect(f"{reverse('main:index')}?tab=reports")
+            # Переходим на вкладку отчетов и передаем параметры для автозагрузки файла
+            return redirect(f"{reverse('main:index')}?tab=reports&auto_download=vacation&request_id={vacation.id}")
         except Exception as e:
             messages.error(request, f'Ошибка при создании заявления: {str(e)}')
             return redirect(f"{reverse('main:index')}?tab=applications")
@@ -1714,15 +1711,26 @@ def generate_material_assistance_docx(material_assistance):
     
     if is_pensioner and is_treatment:
         # Шаблон для пенсионеров "на лечение"
-        # Информация о заявителе (справа вверху)
+        # Шапка (справа вверху)
+        header_para = doc.add_paragraph()
+        header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        header_run = header_para.add_run(
+            'Директору ____________________\n'
+            '____________________\n'
+            'Председателю профсоюза ____________________\n'
+            '____________________'
+        )
+        header_run.font.size = Pt(10)
+        
+        # Пустая строка
+        doc.add_paragraph()
+        
+        # Информация о заявителе (справа под шапкой)
         applicant_para = doc.add_paragraph()
         applicant_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         applicant_info = f'от {material_assistance.worker.full_name}\nпрофессия {material_assistance.worker.position}\nподразделение {material_assistance.worker.department}\nтаб.№ {material_assistance.worker.personnel_number}\nТелефон/моб. {material_assistance.worker.phone or "—"}\nИИН {material_assistance.worker.inn or "—"}'
         applicant_run = applicant_para.add_run(applicant_info)
         applicant_run.font.size = Pt(9)
-        
-        # Пустая строка
-        doc.add_paragraph()
         
         # Заголовок "ЗАЯВЛЕНИЕ" по центру
         title_para = doc.add_paragraph()
@@ -1759,15 +1767,26 @@ def generate_material_assistance_docx(material_assistance):
         signature_run.font.size = Pt(12)
     else:
         # Обычный шаблон
-        # Информация о заявителе (справа вверху)
+        # Шапка (справа вверху)
+        header_para = doc.add_paragraph()
+        header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        header_run = header_para.add_run(
+            'Директору ____________________\n'
+            '____________________\n'
+            'Председателю профсоюза ____________________\n'
+            '____________________'
+        )
+        header_run.font.size = Pt(10)
+        
+        # Пустая строка
+        doc.add_paragraph()
+        
+        # Информация о заявителе (справа под шапкой)
         applicant_para = doc.add_paragraph()
         applicant_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         applicant_info = f'от {material_assistance.worker.full_name}\nпрофессия {material_assistance.worker.position}\nподразделение {material_assistance.worker.department}\nтаб.№ {material_assistance.worker.personnel_number}\nТелефон/моб. {material_assistance.worker.phone or "—"}\nИИН {material_assistance.worker.inn or "—"}'
         applicant_run = applicant_para.add_run(applicant_info)
         applicant_run.font.size = Pt(9)
-        
-        # Пустая строка
-        doc.add_paragraph()
         
         # Заголовок "ЗАЯВЛЕНИЕ" по центру
         title_para = doc.add_paragraph()
@@ -1831,6 +1850,12 @@ def generate_material_assistance_preview(material_assistance):
     preview = f'''
     <div class="vacation-request-preview">
         <div class="preview-header-right">
+            <div>Директору ____________________</div>
+            <div>____________________</div>
+            <div>Председателю профсоюза ____________________</div>
+            <div>____________________</div>
+        </div>
+        <div class="preview-applicant-right">
             {applicant_info}
         </div>
         
@@ -1951,21 +1976,21 @@ def create_coal_request(request):
             messages.error(request, 'Не выбран тип счета!')
             return redirect(f"{reverse('main:index')}?tab=applications")
         
-        # Валидация 20-значного счета
-        if account_type == '20_digit':
+        # Валидация счета (KZ + 18 цифр)
+        if account_type:
             if not account_number:
-                messages.error(request, 'Не указан номер 20-значного счета!')
+                messages.error(request, 'Не указан номер счета!')
                 return redirect(f"{reverse('main:index')}?tab=applications")
             if not account_number.startswith('KZ'):
                 messages.error(request, 'Номер счета должен начинаться с KZ!')
                 return redirect(f"{reverse('main:index')}?tab=applications")
-            if len(account_number) != 22:
-                messages.error(request, 'Номер счета должен содержать KZ и 20 цифр (всего 22 символа)!')
+            if len(account_number) != 20:
+                messages.error(request, 'Номер счета должен содержать KZ и 18 цифр (всего 20 символов)!')
                 return redirect(f"{reverse('main:index')}?tab=applications")
             # Проверяем, что после KZ идут только цифры
             digits = account_number[2:]
-            if not digits.isdigit():
-                messages.error(request, 'После KZ должны быть только цифры!')
+            if not digits.isdigit() or len(digits) != 18:
+                messages.error(request, 'После KZ должны быть только 18 цифр!')
                 return redirect(f"{reverse('main:index')}?tab=applications")
         
         # Создаем заявление
@@ -1976,10 +2001,13 @@ def create_coal_request(request):
             if 'pensioner_id_file' in request.FILES:
                 worker.pensioner_id_file = request.FILES['pensioner_id_file']
             
-            # Сохраняем 20-значный счет в карточку работника
-            if account_type == '20_digit' and account_number:
-                worker.account_20_digit = account_number
-            
+            # Сохраняем счет в карточку работника в зависимости от типа
+            if account_number:
+                if account_type == '20_digit':
+                    worker.account_20_digit = account_number
+                elif account_type == 'current':
+                    worker.current_account = account_number
+
             worker.save()
             
             # Создаем заявление (файлы уже сохранены в карточке работника)
@@ -1987,34 +2015,12 @@ def create_coal_request(request):
                 user=request.user,
                 worker=worker,
                 account_type=account_type,
-                account_number=account_number if account_type == '20_digit' else '',
+                account_number=account_number,
             )
             
             messages.success(request, f'Заявление на уголь для {worker.full_name} успешно создано!')
-            
-            # Автоматически скачиваем печатное заявление
-            try:
-                buffer = generate_coal_request_docx(coal_request)
-                
-                response = HttpResponse(
-                    buffer.getvalue(),
-                    content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-                )
-                # Убираем пробелы из имени файла
-                worker_name_clean = worker.full_name.replace(' ', '_')
-                filename = f"Заявление_на_уголь_{worker_name_clean}_{date.today().strftime('%d.%m.%Y')}.docx"
-                # Правильная кодировка имени файла для кириллицы
-                # Используем транслитерацию для максимальной совместимости с браузерами
-                safe_filename = transliterate_filename(filename)
-                # Используем только транслитерированное имя для гарантированной работы во всех браузерах
-                response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
-                return response
-            except Exception as doc_error:
-                import traceback
-                print(f"DEBUG: Ошибка при генерации документа для заявления на уголь: {str(doc_error)}")
-                print(f"DEBUG: Traceback: {traceback.format_exc()}")
-                messages.warning(request, f'Заявление создано, но не удалось сгенерировать файл. Вы можете скачать его позже из списка заявлений.')
-                return redirect(f"{reverse('main:index')}?tab=reports")
+            # Переходим на вкладку отчетов и передаем параметры для автозагрузки файла
+            return redirect(f"{reverse('main:index')}?tab=reports&auto_download=coal&request_id={coal_request.id}")
             
         except Exception as e:
             messages.error(request, f'Ошибка при создании заявления: {str(e)}')
@@ -2041,11 +2047,16 @@ def generate_coal_request_docx(coal_request):
     font.name = 'Times New Roman'
     font.size = Pt(11)
     
-    # Заголовок справа
+    # Шапка справа
     header_para = doc.add_paragraph()
     header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    header_run = header_para.add_run('Приложение №2\nк Положению об оздоровлении работников\nи членов их семьи\nАО «QARMЕТ»\n(стальной и угольный департаменты)')
-    header_run.font.size = Pt(9)
+    header_run = header_para.add_run(
+        'Директору ____________________\n'
+        '____________________\n'
+        'Председателю профсоюза ____________________\n'
+        '____________________'
+    )
+    header_run.font.size = Pt(10)
     
     # Данные заявителя справа (автоматическое заполнение)
     applicant_para = doc.add_paragraph()
@@ -2130,6 +2141,12 @@ def coal_request_detail(request, request_id):
             pensioner_id_file_url = None
             pensioner_id_file_name = None
     
+    # Определяем отображаемый счет: для текущего счета показываем только текст
+    if coal_request.account_type == '20_digit':
+        display_account_number = coal_request.account_number or coal_request.worker.account_20_digit or '—'
+    else:
+        display_account_number = 'Текущий счет'
+
     data = {
         'id': coal_request.id,
         'type': 'Заявление на уголь',
@@ -2147,7 +2164,7 @@ def coal_request_detail(request, request_id):
         },
         'coal_details': {
             'account_type': coal_request.get_account_type_display(),
-            'account_number': coal_request.account_number or (coal_request.worker.account_20_digit if coal_request.worker.account_20_digit else '—'),
+            'account_number': display_account_number,
             'has_passport_file': bool(coal_request.worker.house_passport_file),
             'passport_file_url': coal_request.worker.house_passport_file.url if coal_request.worker.house_passport_file else None,
             'passport_file_name': coal_request.worker.house_passport_file.name.split('/')[-1] if coal_request.worker.house_passport_file else None,
@@ -2167,11 +2184,10 @@ def generate_coal_request_preview(coal_request):
     preview = f'''
     <div class="vacation-request-preview">
         <div class="preview-header-right">
-            <div>Приложение №2</div>
-            <div>к Положению об оздоровлении работников</div>
-            <div>и членов их семьи</div>
-            <div>АО «QARMЕТ»</div>
-            <div>(стальной и угольный департаменты)</div>
+            <div>Директору ____________________</div>
+            <div>____________________</div>
+            <div>Председателю профсоюза ____________________</div>
+            <div>____________________</div>
         </div>
         <div class="preview-applicant-right">
             <div>от {coal_request.worker.full_name}</div>
@@ -2266,20 +2282,20 @@ def create_funeral_request(request):
             messages.error(request, 'Не выбран тип счета!')
             return redirect(f"{reverse('main:index')}?tab=applications")
         
-        # Валидация 20-значного счета
-        if account_type == '20_digit':
+        # Валидация счета (KZ + 18 цифр) для любого типа
+        if account_type:
             if not account_number:
-                messages.error(request, 'Не указан номер 20-значного счета!')
+                messages.error(request, 'Не указан номер счета!')
                 return redirect(f"{reverse('main:index')}?tab=applications")
             if not account_number.startswith('KZ'):
                 messages.error(request, 'Номер счета должен начинаться с KZ!')
                 return redirect(f"{reverse('main:index')}?tab=applications")
-            if len(account_number) != 22:
-                messages.error(request, 'Номер счета должен содержать KZ и 20 цифр (всего 22 символа)!')
+            if len(account_number) != 20:
+                messages.error(request, 'Номер счета должен содержать KZ и 18 цифр (всего 20 символов)!')
                 return redirect(f"{reverse('main:index')}?tab=applications")
             digits = account_number[2:]
-            if not digits.isdigit():
-                messages.error(request, 'После KZ должны быть только цифры!')
+            if not digits.isdigit() or len(digits) != 18:
+                messages.error(request, 'После KZ должны быть только 18 цифр!')
                 return redirect(f"{reverse('main:index')}?tab=applications")
         
         # Создаем заявление
@@ -2297,7 +2313,7 @@ def create_funeral_request(request):
                 applicant_full_name=applicant_full_name,
                 applicant_inn=cleaned_inn,
                 account_type=account_type,
-                account_number=account_number if account_type == '20_digit' else '',
+                account_number=account_number,
             )
             
             # Обрабатываем удостоверение заявителя
@@ -2307,31 +2323,8 @@ def create_funeral_request(request):
             
             messages.success(request, f'Заявление на погребение для {worker.full_name} успешно создано!')
             messages.warning(request, '⚠️ ВНИМАНИЕ: Пенсионер помечен как умерший!')
-            
-            # Автоматически скачиваем печатное заявление
-            try:
-                buffer = generate_funeral_request_docx(funeral_request)
-                
-                response = HttpResponse(
-                    buffer.getvalue(),
-                    content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-                )
-                # Убираем пробелы из имени файла
-                worker_name_clean = worker.full_name.replace(' ', '_')
-                applicant_name_clean = applicant_full_name.replace(' ', '_')
-                filename = f"Заявление_на_погребение_пенсионера_{worker_name_clean}_заявитель_{applicant_name_clean}_{date.today().strftime('%d.%m.%Y')}.docx"
-                # Правильная кодировка имени файла для кириллицы
-                # Используем транслитерацию для максимальной совместимости с браузерами
-                safe_filename = transliterate_filename(filename)
-                # Используем только транслитерированное имя для гарантированной работы во всех браузерах
-                response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
-                return response
-            except Exception as doc_error:
-                import traceback
-                print(f"DEBUG: Ошибка при генерации документа для заявления на погребение: {str(doc_error)}")
-                print(f"DEBUG: Traceback: {traceback.format_exc()}")
-                messages.warning(request, f'Заявление создано, но не удалось сгенерировать файл. Вы можете скачать его позже из списка заявлений.')
-                return redirect(f"{reverse('main:index')}?tab=reports")
+            # Переходим на вкладку отчетов и передаем параметры для автозагрузки файла
+            return redirect(f"{reverse('main:index')}?tab=reports&auto_download=funeral&request_id={funeral_request.id}")
             
         except Exception as e:
             messages.error(request, f'Ошибка при создании заявления: {str(e)}')
@@ -2357,6 +2350,17 @@ def generate_funeral_request_docx(funeral_request):
     font = style.font
     font.name = 'Times New Roman'
     font.size = Pt(11)
+    
+    # Шапка справа
+    header_para = doc.add_paragraph()
+    header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    header_run = header_para.add_run(
+        'Директору ____________________\n'
+        '____________________\n'
+        'Председателю профсоюза ____________________\n'
+        '____________________'
+    )
+    header_run.font.size = Pt(10)
     
     # Данные заявителя справа (автоматическое заполнение)
     applicant_para = doc.add_paragraph()
@@ -2452,6 +2456,10 @@ def generate_funeral_request_preview(funeral_request):
     """Генерация HTML предпросмотра заявления на погребение"""
     preview = f'''
     <div class="vacation-request-preview">
+        <div class="preview-header-right">
+            <div>Директору ____________________</div>
+            <div>председателю профсоюза ____________________</div>
+        </div>
         <div class="preview-applicant-right">
             <div>от {funeral_request.applicant_full_name}</div>
             <div>ИИН {funeral_request.applicant_inn}</div>
@@ -2549,7 +2557,7 @@ def coal_compensation_list(request):
         ).select_related('worker', 'user').order_by('worker__full_name')
     else:
         coal_requests = CoalRequest.objects.filter(
-            user=request.user,
+            worker__user=request.user,
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
@@ -2559,8 +2567,7 @@ def coal_compensation_list(request):
     for idx, coal_request in enumerate(coal_requests, 1):
         worker = coal_request.worker
         
-        # Получаем счет карты
-        account_number = ''
+        # Получаем счет (карточный или текущий)
         if coal_request.account_type == '20_digit':
             account_number = coal_request.account_number or worker.account_20_digit or ''
         else:
@@ -2594,7 +2601,7 @@ def coal_compensation_list(request):
     if user_is_admin:
         all_coal_requests = CoalRequest.objects.all().order_by('-created_at')
     else:
-        all_coal_requests = CoalRequest.objects.filter(user=request.user).order_by('-created_at')
+        all_coal_requests = CoalRequest.objects.filter(worker__user=request.user).order_by('-created_at')
     periods_set = set()
     for req in all_coal_requests:
         req_date = req.created_at.date()
@@ -2667,7 +2674,7 @@ def generate_coal_compensation_excel(request):
         ).select_related('worker', 'user').order_by('worker__full_name')
     else:
         coal_requests = CoalRequest.objects.filter(
-            user=request.user,
+            worker__user=request.user,
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
@@ -2775,8 +2782,7 @@ def generate_coal_compensation_excel(request):
         # ИИН
         ws.cell(row=row_num, column=3 + col_offset, value=worker.inn or '').alignment = center_alignment
         
-        # Счет карты
-        account_number = ''
+        # Счет (карточный или текущий)
         if coal_request.account_type == '20_digit':
             account_number = coal_request.account_number or worker.account_20_digit or ''
         else:
@@ -2957,7 +2963,7 @@ def bonus_payment_list(request):
         if user_is_admin:
             coal_request = CoalRequest.objects.filter(worker=worker).order_by('-created_at').first()
         else:
-            coal_request = CoalRequest.objects.filter(user=request.user, worker=worker).order_by('-created_at').first()
+            coal_request = CoalRequest.objects.filter(worker__user=request.user, worker=worker).order_by('-created_at').first()
         
         if coal_request:
             if coal_request.account_type == '20_digit':
@@ -2969,7 +2975,7 @@ def bonus_payment_list(request):
             if user_is_admin:
                 funeral_request = FuneralRequest.objects.filter(worker=worker).order_by('-created_at').first()
             else:
-                funeral_request = FuneralRequest.objects.filter(user=request.user, worker=worker).order_by('-created_at').first()
+                funeral_request = FuneralRequest.objects.filter(worker__user=request.user, worker=worker).order_by('-created_at').first()
             
             if funeral_request:
                 if funeral_request.account_type == '20_digit':
@@ -3392,7 +3398,7 @@ def funeral_services_list(request):
         ).select_related('worker', 'user').order_by('worker__full_name')
     else:
         funeral_requests = FuneralRequest.objects.filter(
-            user=request.user,
+            worker__user=request.user,
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
@@ -3425,7 +3431,7 @@ def funeral_services_list(request):
     if user_is_admin:
         all_funeral_requests = FuneralRequest.objects.all().order_by('-created_at')
     else:
-        all_funeral_requests = FuneralRequest.objects.filter(user=request.user).order_by('-created_at')
+        all_funeral_requests = FuneralRequest.objects.filter(worker__user=request.user).order_by('-created_at')
     periods_set = set()
     for req in all_funeral_requests:
         req_date = req.created_at.date()
@@ -3489,7 +3495,7 @@ def generate_funeral_services_excel(request):
         ).select_related('worker', 'user').order_by('worker__full_name')
     else:
         funeral_requests = FuneralRequest.objects.filter(
-            user=request.user,
+            worker__user=request.user,
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
@@ -3736,7 +3742,7 @@ def pensioner_material_assistance_list(request):
         if user_is_admin:
             coal_request = CoalRequest.objects.filter(worker=worker).order_by('-created_at').first()
         else:
-            coal_request = CoalRequest.objects.filter(user=request.user, worker=worker).order_by('-created_at').first()
+            coal_request = CoalRequest.objects.filter(worker__user=request.user, worker=worker).order_by('-created_at').first()
         
         if coal_request:
             if coal_request.account_type == '20_digit':
@@ -3748,7 +3754,7 @@ def pensioner_material_assistance_list(request):
             if user_is_admin:
                 funeral_request = FuneralRequest.objects.filter(worker=worker).order_by('-created_at').first()
             else:
-                funeral_request = FuneralRequest.objects.filter(user=request.user, worker=worker).order_by('-created_at').first()
+                funeral_request = FuneralRequest.objects.filter(worker__user=request.user, worker=worker).order_by('-created_at').first()
             
             if funeral_request:
                 if funeral_request.account_type == '20_digit':

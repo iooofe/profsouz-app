@@ -119,7 +119,7 @@
                             </div>
                         </div>
                         <div class="application-card" onclick="toggleFuneralRequestForm()">
-                            <div class="application-card-icon">⚰️</div>
+                            <div class="application-card-icon">📄</div>
                             <div class="application-card-content">
                                 <h3 class="application-card-title">Заявление на погребение</h3>
                                 <p class="application-card-description">Создать заявление на погребение пенсионеров</p>
@@ -346,22 +346,23 @@
                                         <label class="form-label">Тип счета *</label>
                                         <select name="account_type" id="coal-account-type" class="form-input" required onchange="toggleCoalAccountNumber()">
                                             <option value="">Выберите тип счета</option>
-                                            <option value="20_digit">20-ти значный счет</option>
+                                            <option value="20_digit">Карточный счет</option>
                                             <option value="current">Текущий счет</option>
                                         </select>
                                     </div>
                                     <div class="form-group" id="coal-account-number-group" style="display: none;">
-                                        <label class="form-label">Номер 20-значного счета *</label>
+                                        <label class="form-label">Номер счета (KZ + 18 цифр) *</label>
                                         <input 
                                             type="text" 
                                             name="account_number" 
                                             id="coal-account-number"
                                             class="form-input" 
-                                            placeholder="KZ12345678901234567890"
-                                            maxlength="22"
-                                            pattern="KZ[0-9]{20}"
+                                            placeholder="KZ1234567890123456780"
+                                            maxlength="20"
+                                            pattern="KZ[0-9]{18}"
                                         >
-                                        <div class="form-hint">Формат: KZ + 20 цифр (например: KZ12345678901234567890)</div>
+                                        <div class="form-hint">Формат: KZ + 18 цифр (например: KZ1234567890123456780)</div>
+                                        <div class="form-hint" id="coal-account-hint">Счет(а) в карточке работника: не указаны</div>
                                     </div>
                                 </div>
                             </div>
@@ -438,22 +439,23 @@
                                         <label class="form-label">Тип счета *</label>
                                         <select name="account_type" id="funeral-account-type" class="form-input" required onchange="toggleFuneralAccountNumber()">
                                             <option value="">Выберите тип счета</option>
-                                            <option value="20_digit">20-ти значный счет</option>
+                                            <option value="20_digit">Карточный счет</option>
                                             <option value="current">Текущий счет</option>
                                         </select>
                                     </div>
                                     <div class="form-group" id="funeral-account-number-group" style="display: none;">
-                                        <label class="form-label">Номер 20-значного счета *</label>
+                                        <label class="form-label">Номер счета (KZ + 18 цифр) *</label>
                                         <input 
                                             type="text" 
                                             name="account_number" 
                                             id="funeral-account-number"
                                             class="form-input" 
-                                            placeholder="KZ12345678901234567890"
-                                            maxlength="22"
-                                            pattern="KZ[0-9]{20}"
+                                            placeholder="KZ1234567890123456780"
+                                            maxlength="20"
+                                            pattern="KZ[0-9]{18}"
                                         >
-                                        <div class="form-hint">Формат: KZ + 20 цифр (например: KZ12345678901234567890)</div>
+                                        <div class="form-hint">Формат: KZ + 18 цифр (например: KZ1234567890123456780)</div>
+                                        <div class="form-hint" id="funeral-account-hint">Счет(а) в карточке пенсионера: не указаны</div>
                                     </div>
                                 </div>
                             </div>
@@ -499,12 +501,13 @@
                                 </select>
                             </div>
                         </div>
-                        {% if vacation_requests or material_assistance_requests or coal_requests %}
+                        {% if vacation_requests or material_assistance_requests or coal_requests or funeral_requests %}
                             <div class="reports-count">
-                                Всего заявлений: <span id="total-reports-count">{{ vacation_requests|length|add:material_assistance_requests|length|add:coal_requests|length }}</span>
+                                Всего заявлений: <span id="total-reports-count">{{ vacation_requests|length|add:material_assistance_requests|length|add:coal_requests|length|add:funeral_requests|length }}</span>
                                 {% if vacation_requests %} (Путевки: {{ vacation_requests|length }}){% endif %}
                                 {% if material_assistance_requests %} (Материальная помощь: {{ material_assistance_requests|length }}){% endif %}
                                 {% if coal_requests %} (Заявление на уголь: {{ coal_requests|length }}){% endif %}
+                                {% if funeral_requests %} (Заявление на погребение: {{ funeral_requests|length }}){% endif %}
                             </div>
                             <div class="reports-grid" id="reports-grid">
                                 {% for request in vacation_requests %}
@@ -624,7 +627,7 @@
                                 {% endfor %}
                                 {% for request in funeral_requests %}
                                 <div class="report-card-clickable" onclick="showFuneralRequestDetail({{ request.id }})" data-worker-id="{{ request.worker.id }}" data-report-type="funeral" data-report-status="">
-                                    <div class="report-card-icon">⚰️</div>
+                                    <div class="report-card-icon">📄</div>
                                     <div class="report-card-content">
                                         <div class="report-card-header">
                                             <h3 class="report-card-title">
@@ -842,7 +845,7 @@
                             </div>
                         </div>
                         <div class="list-card" onclick="showFuneralServicesList()">
-                            <div class="list-card-icon">⚱️</div>
+                            <div class="list-card-icon">📋</div>
                             <div class="list-card-content">
                                 <h3 class="list-card-title">Список ритуальных услуг</h3>
                                 <p class="list-card-description">Просмотр и экспорт списка ритуальных услуг (заявления на погребение)</p>
@@ -1267,7 +1270,7 @@
         {% endif %}
     });
     
-    // Tab switching functionality
+    // Tab switching functionality + авто-загрузка документов после создания заявлений
     document.addEventListener('DOMContentLoaded', function() {
         const tabButtons = document.querySelectorAll('.tab-button');
         const tabPanes = document.querySelectorAll('.tab-pane');
@@ -1275,6 +1278,8 @@
         // Восстанавливаем активную вкладку из URL параметров
         const urlParams = new URLSearchParams(window.location.search);
         const savedTab = urlParams.get('tab');
+        const autoDownload = urlParams.get('auto_download');
+        const autoDownloadRequestId = urlParams.get('request_id');
         let activeTab = savedTab || 'applications'; // По умолчанию первая вкладка
         
         // Активируем нужную вкладку
@@ -1301,6 +1306,34 @@
         
         // Активируем вкладку при загрузке
         activateTab(activeTab);
+
+        // Если пришли с параметром авто-загрузки, сразу запускаем скачивание файла
+        if (activeTab === 'reports' && autoDownload && autoDownloadRequestId) {
+            let downloadUrl = null;
+            if (autoDownload === 'vacation') {
+                downloadUrl = `/vacation-request/${autoDownloadRequestId}/download/`;
+            } else if (autoDownload === 'coal') {
+                downloadUrl = `/coal-request/${autoDownloadRequestId}/download/`;
+            } else if (autoDownload === 'funeral') {
+                downloadUrl = `/funeral-request/${autoDownloadRequestId}/download/`;
+            }
+
+            if (downloadUrl) {
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = '';
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                // Очищаем параметры авто-загрузки в адресной строке, чтобы не повторять скачивание
+                const cleanUrl = new URL(window.location);
+                cleanUrl.searchParams.delete('auto_download');
+                cleanUrl.searchParams.delete('request_id');
+                window.history.replaceState({}, '', cleanUrl);
+            }
+        }
         
         tabButtons.forEach(button => {
             button.addEventListener('click', function() {
@@ -1446,33 +1479,92 @@
             return activeTab ? activeTab.getAttribute('data-tab') : 'workers';
         }
         
+        // Функция для обновления таблицы работников через AJAX
+        function updateWorkersTable(workers) {
+            const tbody = document.querySelector('.workers-table tbody');
+            const workersCount = document.querySelector('.workers-count');
+            const emptyState = document.querySelector('.empty-state');
+            const tableContainer = document.querySelector('.workers-table-container');
+            
+            if (!tbody) return;
+            
+            // Очищаем таблицу
+            tbody.innerHTML = '';
+            
+            if (workers.length > 0) {
+                // Показываем таблицу и счетчик
+                if (tableContainer) tableContainer.style.display = '';
+                if (emptyState) emptyState.style.display = 'none';
+                if (workersCount) {
+                    workersCount.innerHTML = `Найдено: ${workers.length}`;
+                    workersCount.style.display = '';
+                }
+                
+                // Заполняем таблицу
+                workers.forEach(worker => {
+                    const row = document.createElement('tr');
+                    row.className = 'worker-row-clickable';
+                    row.style.cursor = 'pointer';
+                    row.onclick = () => showWorkerDetail(worker.id);
+                    
+                    const statusBadge = worker.status === 'pensioner' ? 
+                        '<span class="status-badge status-pensioner">Пенсионер</span>' : 
+                        '<span class="status-badge status-worker">Работник</span>';
+                    
+                    row.innerHTML = `
+                        <td>${worker.full_name || '—'}</td>
+                        <td>${worker.personnel_number || '—'}</td>
+                        <td>${worker.inn || '—'}</td>
+                        <td>${statusBadge}</td>
+                        <td>${worker.department || '—'}</td>
+                        <td>${worker.position || '—'}</td>
+                        <td>${worker.phone || '—'}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            } else {
+                // Показываем пустое состояние
+                if (tableContainer) tableContainer.style.display = 'none';
+                if (emptyState) {
+                    emptyState.innerHTML = '<p>По вашему запросу ничего не найдено</p>';
+                    emptyState.style.display = '';
+                }
+                if (workersCount) {
+                    workersCount.innerHTML = 'Найдено: 0';
+                    workersCount.style.display = '';
+                }
+            }
+        }
+        
         if (searchInput && searchForm) {
             // Сохраняем активную вкладку перед отправкой формы
             searchForm.addEventListener('submit', function(e) {
+                e.preventDefault();
                 const tabName = getActiveTab();
                 if (activeTabInput) {
                     activeTabInput.value = tabName;
                 }
-                // Добавляем tab в URL
-                const url = new URL(window.location);
-                url.searchParams.set('tab', tabName);
-                if (searchInput.value) {
-                    url.searchParams.set('search', searchInput.value);
-                } else {
-                    url.searchParams.delete('search');
-                }
-                window.location.href = url.toString();
-                e.preventDefault();
-            });
-            
-            searchInput.addEventListener('input', function(e) {
-                clearTimeout(searchTimeout);
-                searchTimeout = setTimeout(function() {
-                    const tabName = getActiveTab();
-                    if (activeTabInput) {
-                        activeTabInput.value = tabName;
+                // Для вкладки работников используем AJAX
+                if (tabName === 'workers') {
+                    const query = searchInput.value.trim();
+                    if (query) {
+                        fetch(`/api/search-workers/?q=${encodeURIComponent(query)}`)
+                            .then(response => response.json())
+                            .then(data => {
+                                updateWorkersTable(data.results || []);
+                            })
+                            .catch(error => {
+                                console.error('Ошибка поиска:', error);
+                            });
+                    } else {
+                        // Если запрос пустой, перезагружаем страницу для показа всех работников
+                        const url = new URL(window.location);
+                        url.searchParams.delete('search');
+                        url.searchParams.set('tab', tabName);
+                        window.location.href = url.toString();
                     }
-                    // Обновляем URL и отправляем форму
+                } else {
+                    // Для других вкладок используем обычную перезагрузку
                     const url = new URL(window.location);
                     url.searchParams.set('tab', tabName);
                     if (searchInput.value) {
@@ -1481,6 +1573,48 @@
                         url.searchParams.delete('search');
                     }
                     window.location.href = url.toString();
+                }
+            });
+            
+            searchInput.addEventListener('input', function(e) {
+                clearTimeout(searchTimeout);
+                const query = e.target.value.trim();
+                const tabName = getActiveTab();
+                
+                // Обновляем URL без перезагрузки страницы
+                const url = new URL(window.location);
+                url.searchParams.set('tab', tabName);
+                if (query) {
+                    url.searchParams.set('search', query);
+                } else {
+                    url.searchParams.delete('search');
+                }
+                window.history.pushState({}, '', url.toString());
+                
+                // AJAX запрос для обновления таблицы работников
+                searchTimeout = setTimeout(function() {
+                    if (tabName === 'workers') {
+                        if (query) {
+                            fetch(`/api/search-workers/?q=${encodeURIComponent(query)}`)
+                                .then(response => response.json())
+                                .then(data => {
+                                    updateWorkersTable(data.results || []);
+                                })
+                                .catch(error => {
+                                    console.error('Ошибка поиска:', error);
+                                });
+                        } else {
+                            // Если запрос пустой, показываем всех работников
+                            fetch(`/api/search-workers/?q=`)
+                                .then(response => response.json())
+                                .then(data => {
+                                    updateWorkersTable(data.results || []);
+                                })
+                                .catch(error => {
+                                    console.error('Ошибка поиска:', error);
+                                });
+                        }
+                    }
                 }, 500); // Задержка 500мс перед отправкой
             });
             
@@ -1718,8 +1852,14 @@
                                 ` : ''}
                                 ${data.account_20_digit && data.account_20_digit !== '—' ? `
                                 <div class="detail-item">
-                                    <span class="detail-label">20-значный счет:</span>
+                                    <span class="detail-label">Карточный счет:</span>
                                     <span class="detail-value">${data.account_20_digit}</span>
+                                </div>
+                                ` : ''}
+                                ${data.current_account && data.current_account !== '—' ? `
+                                <div class="detail-item">
+                                    <span class="detail-label">Текущий счет:</span>
+                                    <span class="detail-value">${data.current_account}</span>
                                 </div>
                                 ` : ''}
                                 ${data.is_dead === 'Да' ? `
@@ -2645,7 +2785,7 @@
                         </div>
                         
                         <div class="detail-section">
-                            <div class="detail-section-actions">
+                            <div class="detail-section-rejection">
                                 <label class="rejection-checkbox">
                                     <input 
                                         type="checkbox" 
@@ -2654,6 +2794,11 @@
                                     >
                                     <span>Отказ от путевки</span>
                                 </label>
+                            </div>
+                        </div>
+                        
+                        <div class="detail-section">
+                            <div class="detail-section-actions">
                                 <button class="btn btn-primary" onclick="downloadVacationRequest(${data.id})">
                                     📄 Скачать в Word
                                 </button>
@@ -2824,15 +2969,10 @@
         const accountNumberGroup = document.getElementById('coal-account-number-group');
         const accountNumberInput = document.getElementById('coal-account-number');
         
-        if (accountType === '20_digit') {
-            accountNumberGroup.style.display = 'block';
-            if (accountNumberInput) accountNumberInput.setAttribute('required', 'required');
-        } else {
-            accountNumberGroup.style.display = 'none';
-            if (accountNumberInput) {
-                accountNumberInput.removeAttribute('required');
-                accountNumberInput.value = '';
-            }
+        // Поле счета обязательно для любого типа
+        accountNumberGroup.style.display = 'block';
+        if (accountNumberInput) {
+            accountNumberInput.setAttribute('required', 'required');
         }
     }
     
@@ -2851,24 +2991,23 @@
             return false;
         }
         
-        if (accountType === '20_digit') {
-            if (!accountNumber) {
-                showError('Введите номер 20-значного счета');
-                return false;
-            }
-            if (!accountNumber.startsWith('KZ')) {
-                showError('Номер счета должен начинаться с KZ');
-                return false;
-            }
-            if (accountNumber.length !== 22) {
-                showError('Номер счета должен содержать KZ и 20 цифр (всего 22 символа)');
-                return false;
-            }
-            const digits = accountNumber.substring(2);
-            if (!/^\d+$/.test(digits)) {
-                showError('После KZ должны быть только цифры');
-                return false;
-            }
+        // Валидация счета для любого типа (KZ + 18 цифр)
+        if (!accountNumber) {
+            showError('Введите номер счета');
+            return false;
+        }
+        if (!accountNumber.startsWith('KZ')) {
+            showError('Номер счета должен начинаться с KZ');
+            return false;
+        }
+        if (accountNumber.length !== 20) {
+            showError('Номер счета должен содержать KZ и 18 цифр (всего 20 символов)');
+            return false;
+        }
+        const digits = accountNumber.substring(2);
+        if (!/^[0-9]{18}$/.test(digits)) {
+            showError('После KZ должны быть ровно 18 цифр');
+            return false;
         }
         
         return true;
@@ -2893,8 +3032,12 @@
                 fetch(`/api/search-workers/?q=${encodeURIComponent(query)}`)
                     .then(response => response.json())
                     .then(data => {
-                        // Фильтруем только пенсионеров
-                        const pensioners = data.results.filter(worker => worker.status === 'pensioner');
+                        // Фильтруем только пенсионеров (учитываем как код статуса, так и отображаемое имя)
+                        const pensioners = data.results.filter(worker => {
+                            if (worker.status === 'pensioner') return true;
+                            const display = (worker.status_display || '').toLowerCase();
+                            return display.includes('пенсионер');
+                        });
                         const isAdmin = {% if user.username == 'АДМИН' or user.is_staff or user.is_superuser %}true{% else %}false{% endif %};
                         if (pensioners.length > 0) {
                             coalRequestWorkerAutocomplete.innerHTML = pensioners.map(worker => {
@@ -2903,8 +3046,10 @@
                                 const statusDisplay = (worker.status_display || '').replace(/'/g, "\\'");
                                 const isDead = worker.is_dead || false;
                                 const userAccount = worker.user_account || '';
+                                const cardAccount = (worker.card_account || '').replace(/'/g, "\\'");
+                                const currentAccount = (worker.current_account || '').replace(/'/g, "\\'");
                                 return `
-                                    <div class="autocomplete-item" onclick="selectCoalRequestWorker(${worker.id}, '${fullName}', '${personnelNumber}', '${statusDisplay}', ${isDead})">
+                                    <div class="autocomplete-item" onclick="selectCoalRequestWorker(${worker.id}, '${fullName}', '${personnelNumber}', '${statusDisplay}', ${isDead}, '${cardAccount}', '${currentAccount}')">
                                         <strong>${worker.full_name}${isAdmin && userAccount ? ` <span style="color: var(--text-secondary); font-size: 12px;">(${userAccount})</span>` : ''}</strong><br>
                                         <small>${worker.personnel_number} - Пенсионер${isDead ? ' ⚠️ УМЕР' : ''}</small>
                                     </div>
@@ -2920,7 +3065,7 @@
         });
     }
     
-    function selectCoalRequestWorker(workerId, fullName, personnelNumber, statusDisplay, isDead = false) {
+    function selectCoalRequestWorker(workerId, fullName, personnelNumber, statusDisplay, isDead = false, cardAccount = '', currentAccount = '') {
         document.getElementById('coal-request-selected-worker-id').value = workerId;
         document.getElementById('coal-request-worker-full-name').textContent = fullName;
         document.getElementById('coal-request-worker-personnel-number').textContent = personnelNumber;
@@ -2930,6 +3075,19 @@
         coalRequestWorkerAutocomplete.innerHTML = '';
         coalRequestWorkerAutocomplete.style.display = 'none';
         coalRequestWorkerSearchInput.value = '';
+        
+        // Подсказка по счетам из карточки работника
+        const hintElement = document.getElementById('coal-account-hint');
+        if (hintElement) {
+            if (cardAccount || currentAccount) {
+                const parts = [];
+                if (cardAccount) parts.push(`карточный: ${cardAccount}`);
+                if (currentAccount) parts.push(`текущий: ${currentAccount}`);
+                hintElement.textContent = 'Счет(а) в карточке работника: ' + parts.join(' | ');
+            } else {
+                hintElement.textContent = 'Счет(а) в карточке работника: не указаны';
+            }
+        }
         
         // Показываем предупреждение, если пенсионер мертв
         const warningElement = document.getElementById('coal-request-worker-death-warning');
@@ -3094,9 +3252,12 @@
         const accountNumberGroup = document.getElementById('funeral-account-number-group');
         const accountNumberInput = document.getElementById('funeral-account-number');
         
-        if (accountType === '20_digit') {
+        // Поле счета обязательно для любого типа (карточный или текущий)
+        if (accountType) {
             accountNumberGroup.style.display = 'block';
-            if (accountNumberInput) accountNumberInput.setAttribute('required', 'required');
+            if (accountNumberInput) {
+                accountNumberInput.setAttribute('required', 'required');
+            }
         } else {
             accountNumberGroup.style.display = 'none';
             if (accountNumberInput) {
@@ -3139,24 +3300,23 @@
             return false;
         }
         
-        if (accountType === '20_digit') {
-            if (!accountNumber) {
-                showError('Введите номер 20-значного счета');
-                return false;
-            }
-            if (!accountNumber.startsWith('KZ')) {
-                showError('Номер счета должен начинаться с KZ');
-                return false;
-            }
-            if (accountNumber.length !== 22) {
-                showError('Номер счета должен содержать KZ и 20 цифр (всего 22 символа)');
-                return false;
-            }
-            const digits = accountNumber.substring(2);
-            if (!/^\d+$/.test(digits)) {
-                showError('После KZ должны быть только цифры');
-                return false;
-            }
+        // Валидация счета для любого типа (KZ + 18 цифр)
+        if (!accountNumber) {
+            showError('Введите номер счета');
+            return false;
+        }
+        if (!accountNumber.startsWith('KZ')) {
+            showError('Номер счета должен начинаться с KZ');
+            return false;
+        }
+        if (accountNumber.length !== 20) {
+            showError('Номер счета должен содержать KZ и 18 цифр (всего 20 символов)');
+            return false;
+        }
+        const digits2 = accountNumber.substring(2);
+        if (!/^[0-9]{18}$/.test(digits2)) {
+            showError('После KZ должны быть ровно 18 цифр');
+            return false;
         }
         
         return true;
@@ -3181,8 +3341,12 @@
                 fetch(`/api/search-workers/?q=${encodeURIComponent(query)}`)
                     .then(response => response.json())
                     .then(data => {
-                        // Фильтруем только пенсионеров
-                        const pensioners = data.results.filter(worker => worker.status === 'pensioner');
+                        // Фильтруем только пенсионеров (учитываем как код статуса, так и отображаемое имя)
+                        const pensioners = data.results.filter(worker => {
+                            if (worker.status === 'pensioner') return true;
+                            const display = (worker.status_display || '').toLowerCase();
+                            return display.includes('пенсионер');
+                        });
                         const isAdmin = {% if user.username == 'АДМИН' or user.is_staff or user.is_superuser %}true{% else %}false{% endif %};
                         if (pensioners.length > 0) {
                             funeralRequestWorkerAutocomplete.innerHTML = pensioners.map(worker => {
@@ -3191,8 +3355,10 @@
                                 const statusDisplay = (worker.status_display || '').replace(/'/g, "\\'");
                                 const isDead = worker.is_dead || false;
                                 const userAccount = worker.user_account || '';
+                                const cardAccount = (worker.card_account || '').replace(/'/g, "\\'");
+                                const currentAccount = (worker.current_account || '').replace(/'/g, "\\'");
                                 return `
-                                    <div class="autocomplete-item" onclick="selectFuneralRequestWorker(${worker.id}, '${fullName}', '${personnelNumber}', '${statusDisplay}', ${isDead})">
+                                    <div class="autocomplete-item" onclick="selectFuneralRequestWorker(${worker.id}, '${fullName}', '${personnelNumber}', '${statusDisplay}', ${isDead}, '${cardAccount}', '${currentAccount}')">
                                         <strong>${worker.full_name}${isAdmin && userAccount ? ` <span style="color: var(--text-secondary); font-size: 12px;">(${userAccount})</span>` : ''}</strong><br>
                                         <small>${worker.personnel_number} - Пенсионер${isDead ? ' ⚠️ УМЕР' : ''}</small>
                                     </div>
@@ -3208,7 +3374,7 @@
         });
     }
     
-    function selectFuneralRequestWorker(workerId, fullName, personnelNumber, statusDisplay, isDead = false) {
+    function selectFuneralRequestWorker(workerId, fullName, personnelNumber, statusDisplay, isDead = false, cardAccount = '', currentAccount = '') {
         document.getElementById('funeral-request-selected-worker-id').value = workerId;
         document.getElementById('funeral-request-worker-full-name').textContent = fullName;
         document.getElementById('funeral-request-worker-personnel-number').textContent = personnelNumber;
@@ -3218,6 +3384,19 @@
         funeralRequestWorkerAutocomplete.innerHTML = '';
         funeralRequestWorkerAutocomplete.style.display = 'none';
         funeralRequestWorkerSearchInput.value = '';
+        
+        // Подсказка по счетам из карточки пенсионера
+        const hintElement = document.getElementById('funeral-account-hint');
+        if (hintElement) {
+            if (cardAccount || currentAccount) {
+                const parts = [];
+                if (cardAccount) parts.push(`карточный: ${cardAccount}`);
+                if (currentAccount) parts.push(`текущий: ${currentAccount}`);
+                hintElement.textContent = 'Счет(а) в карточке пенсионера: ' + parts.join(' | ');
+            } else {
+                hintElement.textContent = 'Счет(а) в карточке пенсионера: не указаны';
+            }
+        }
         
         // Показываем предупреждение, если пенсионер мертв
         const warningElement = document.getElementById('funeral-request-worker-death-warning');

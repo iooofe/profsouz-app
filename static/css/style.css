@@ -1211,6 +1211,10 @@ select:focus {
     margin-bottom: var(--spacing-lg);
     position: relative;
     overflow: visible;
+    /* Базовый слой секции форм, чтобы автодополнение не перекрывалось соседними блоками */
+    z-index: 1;
+    /* Предотвращаем выход элементов за границы при hover */
+    contain: layout style;
 }
 
 .form-section::before {
@@ -1237,7 +1241,11 @@ select:focus {
 .form-section:hover {
     box-shadow: var(--shadow-md);
     border-color: var(--primary-color);
-    transform: translateY(-2px);
+    transform: translateY(-1px);
+    /* При наведении поднимаем секцию над другими, чтобы выпадающие списки не обрезались */
+    z-index: 5;
+    /* Убираем contain при hover для корректной работы выпадающих списков */
+    contain: none;
 }
 
 /* Специальная стилизация для секции пенсионеров */
@@ -1353,7 +1361,7 @@ select:focus {
 .family-member-item:hover {
     border-color: var(--primary-color);
     box-shadow: var(--shadow-md);
-    transform: translateX(4px);
+    transform: translateX(2px);
 }
 
 .family-member-header {
@@ -1399,16 +1407,6 @@ select:focus {
 
 .btn-remove-family:active {
     transform: scale(0.95) rotate(90deg);
-}
-    border-radius: 50%;
-    width: 28px;
-    height: 28px;
-    cursor: pointer;
-    font-size: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all var(--transition-base);
 }
 
 .btn-remove-family:hover {
@@ -1705,6 +1703,14 @@ select:focus {
     margin-bottom: 0;
 }
 
+/* Блок для чекбокса отказа от путевки */
+.detail-section-rejection {
+    margin-top: var(--spacing-lg);
+    padding-top: var(--spacing-lg);
+    border-top: 2px solid var(--bg-tertiary);
+    margin-bottom: var(--spacing-lg);
+}
+
 /* Унифицированное расположение кнопок в секциях деталей - всегда справа внизу */
 .detail-section-actions {
     display: flex;
@@ -1954,6 +1960,25 @@ select:focus {
     border: 2px solid transparent;
     min-height: 120px;
     box-sizing: border-box;
+    position: relative;
+    overflow: hidden;
+}
+
+.application-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform var(--transition-smooth);
+}
+
+.application-card:hover::before {
+    transform: scaleX(1);
 }
 
 .application-card:hover {
@@ -1988,15 +2013,20 @@ select:focus {
     margin: 0;
 }
 
-/* Vacation Form */
-.vacation-form-container {
+/* Unified Form Container Styles - для всех форм (vacation, material-assistance, coal-request, funeral-request) */
+.vacation-form-container,
+#material-assistance-form-container,
+#coal-request-form-container,
+#funeral-request-form-container {
     background: var(--bg-primary);
     border-radius: var(--radius-xl);
     padding: var(--spacing-xl);
     overflow: visible;
     margin-top: var(--spacing-xl);
     border: 2px solid var(--bg-tertiary);
-    animation: slideDown 0.3s ease-out;
+    animation: slideDown var(--transition-smooth) cubic-bezier(0.4, 0.0, 0.2, 1);
+    box-shadow: var(--shadow-md);
+    transition: all var(--transition-smooth);
 }
 
 .vacation-form {
@@ -2008,7 +2038,8 @@ select:focus {
 /* Autocomplete */
 .autocomplete-wrapper {
     position: relative;
-    z-index: 9999;
+    /* Повышаем слой, чтобы подсказки не перекрывались соседними блоками */
+    z-index: 20000;
     overflow: visible;
 }
 
@@ -2058,8 +2089,10 @@ select:focus {
 
 .autocomplete-item:hover {
     background: var(--bg-primary);
-    transform: translateX(4px);
+    transform: translateX(2px);
     border-left: 3px solid var(--primary-color);
+    margin-left: -2px;
+    padding-left: calc(var(--spacing-md) + 2px);
 }
 
 .autocomplete-item:active {
@@ -3233,83 +3266,7 @@ input[type="date"].form-input::-webkit-calendar-picker-indicator:hover {
     display: inline-block;
 }
 
-/* Application Cards Improvements */
-.application-card {
-    background: var(--bg-secondary);
-    border-radius: var(--radius-xl);
-    padding: var(--spacing-xl);
-    box-shadow: var(--shadow-md);
-    cursor: pointer;
-    transition: all var(--transition-base);
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-lg);
-    border: 2px solid transparent;
-    position: relative;
-    overflow: hidden;
-}
-
-.application-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 4px;
-    background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
-    transform: scaleX(0);
-    transform-origin: left;
-    transition: transform var(--transition-base);
-}
-
-.application-card:hover::before {
-    transform: scaleX(1);
-}
-
-.application-card:hover {
-    transform: translateY(-4px);
-    box-shadow: var(--shadow-lg);
-    border-color: var(--primary-color);
-}
-
-/* Report Card Improvements */
-.report-card-clickable {
-    background: var(--bg-secondary);
-    border-radius: var(--radius-xl);
-    padding: var(--spacing-lg);
-    box-shadow: var(--shadow-md);
-    border: 1px solid var(--bg-tertiary);
-    cursor: pointer;
-    transition: all var(--transition-base);
-    display: flex;
-    gap: var(--spacing-md);
-    align-items: flex-start;
-    position: relative;
-    overflow: hidden;
-}
-
-.report-card-clickable::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 4px;
-    height: 100%;
-    background: linear-gradient(180deg, var(--primary-color), var(--secondary-color));
-    transform: scaleY(0);
-    transform-origin: top;
-    transition: transform var(--transition-base);
-}
-
-.report-card-clickable:hover::before {
-    transform: scaleY(1);
-}
-
-.report-card-clickable:hover {
-    transform: translateY(-4px) scale(1.01);
-    box-shadow: var(--shadow-lg);
-    border-color: var(--primary-color);
-}
+/* Дублирующиеся стили удалены - используются основные определения выше */
 
 /* Modal Improvements */
 .modal-content {
@@ -3322,7 +3279,7 @@ input[type="date"].form-input::-webkit-calendar-picker-indicator:hover {
     overflow-y: auto;
     box-shadow: var(--shadow-xl);
     z-index: 1;
-    animation: slideUp var(--transition-base) cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    animation: slideUp var(--transition-smooth) cubic-bezier(0.4, 0.0, 0.2, 1);
     border: 1px solid var(--bg-tertiary);
 }
 
@@ -3357,10 +3314,11 @@ input[type="date"].form-input::-webkit-calendar-picker-indicator:hover {
     max-height: 400px;
     overflow-y: auto;
     overflow-x: hidden;
-    z-index: 10000;
+    /* Делаем слой ещё выше, чем у обертки */
+    z-index: 20001;
     margin-top: var(--spacing-xs);
     display: none;
-    animation: slideDown 0.2s ease-out;
+    animation: slideDown var(--transition-smooth) cubic-bezier(0.4, 0.0, 0.2, 1);
 }
 
 .autocomplete-dropdown::-webkit-scrollbar {
@@ -3387,10 +3345,7 @@ input[type="date"].form-input::-webkit-calendar-picker-indicator:hover {
     border-bottom: none;
 }
 
-.autocomplete-item:hover {
-    background: var(--bg-primary);
-    transform: translateX(4px);
-}
+/* Дублирующий стиль удален - используется основной выше */
 
 .autocomplete-item strong {
     display: block;
@@ -3537,6 +3492,7 @@ input[type="date"].form-input::-webkit-calendar-picker-indicator:hover {
     .modal-content {
         max-width: 95%;
         margin: var(--spacing-md);
+        max-height: 95vh;
     }
     
     .form-grid {
@@ -3573,6 +3529,33 @@ input[type="date"].form-input::-webkit-calendar-picker-indicator:hover {
     
     .detail-section-actions .btn {
         width: 100%;
+    }
+    
+    /* Предотвращаем выход элементов за границы на мобильных */
+    .vacation-form-container,
+    #material-assistance-form-container,
+    #coal-request-form-container,
+    #funeral-request-form-container {
+        margin-left: var(--spacing-xs);
+        margin-right: var(--spacing-xs);
+        padding: var(--spacing-lg);
+    }
+    
+    .report-card-clickable,
+    .application-card {
+        min-width: 0;
+        width: 100%;
+    }
+    
+    /* Убираем transform при hover на мобильных для предотвращения артефактов */
+    .report-card-clickable:hover,
+    .application-card:hover {
+        transform: none;
+    }
+    
+    .workers-table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
     }
 }
 
@@ -3613,7 +3596,7 @@ a:focus-visible {
     outline-offset: 2px;
 }
 
-/* Smooth Transitions for All Interactive Elements */
+/* Smooth Transitions for All Interactive Elements - унифицированные переходы */
 button,
 a,
 input,
@@ -3623,7 +3606,7 @@ textarea,
 .application-card,
 .worker-row,
 .autocomplete-item {
-    transition: all var(--transition-base);
+    transition: all var(--transition-smooth);
 }
 
 /* Improved Spacing Consistency */

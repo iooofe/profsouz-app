@@ -16,6 +16,16 @@ import os
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load environment variables from .env file
+env_path = BASE_DIR / '.env'
+if env_path.exists():
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                key, value = line.split('=', 1)
+                os.environ.setdefault(key.strip(), value.strip())
+
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
@@ -29,9 +39,13 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-me')
 # По умолчанию True для разработки, в продакшене установите через переменную окружения
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
-# Разрешенные хосты для продакшена
-# Укажите ваш домен или IP адрес сервера
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+# Разрешенные хосты
+# В продакшене укажите домен или IP адрес сервера через переменную окружения ALLOWED_HOSTS
+ALLOWED_HOSTS = [host.strip() for host in os.environ.get('ALLOWED_HOSTS', 'profsouz.kz,www.profsouz.kz').split(',') if host.strip()]
+
+# В режиме разработки дополнительно разрешаем локальные адреса
+if DEBUG:
+    ALLOWED_HOSTS += ['127.0.0.1', 'localhost']
 
 
 # Application definition
