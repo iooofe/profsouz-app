@@ -40,3 +40,6 @@ Thumbs.db
 ~$*.xlsx
 ~$*.xls
 
+# Excel files with workers data (optional - раскомментируйте если не хотите загружать файлы в репозиторий)
+# работники/
+

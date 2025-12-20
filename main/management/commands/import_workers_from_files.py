@@ -216,6 +216,8 @@ class Command(BaseCommand):
             if len(table.rows) < 2:
                 continue
 
+            first_row_cells = table.rows[0].cells
+            
             # Ищем строку-заголовок среди первых 5 строк таблицы
             header_row = None
             col_index = {}
@@ -241,62 +243,141 @@ class Command(BaseCommand):
             # Если не нашли строку заголовка по текстам, пробуем типовой формат:
             # колонки: № | таб.№ | фамилия | имя | отчество | должность | ... | дата вступления
             if not header_row:
-                # Пробуем найти заголовок в первых строках по ключевым словам
                 found_typical_format = False
                 typical_start_row = 1
                 
-                # Проверяем первые 5 строк на наличие заголовка
-                for check_row_idx in range(min(5, len(table.rows))):
-                    check_row = table.rows[check_row_idx]
-                    check_cells = [c.text.strip().lower() for c in check_row.cells]
-                    # Ищем наличие слов "таб" и "фамилия" или "имя" в разных колонках
-                    has_tab_word = any("таб" in cell for cell in check_cells)
-                    has_name_words = any(
-                        any(word in cell for word in ["фамилия", "имя", "отчество", "фио"])
-                        for cell in check_cells
-                    )
-                    if has_tab_word and has_name_words:
-                        # Это похоже на заголовок, используем следующую строку как начало данных
-                        typical_start_row = check_row_idx + 1
-                        found_typical_format = True
-                        break
-                
-                # Если не нашли заголовок, но таблица имеет достаточно колонок, пробуем обработать
-                # как типовой формат (№ | таб.№ | фамилия | имя | отчество | ...)
-                first_row_cells = table.rows[0].cells
-                if not found_typical_format and len(first_row_cells) >= 5:
-                    # Проверяем, не является ли первая строка данными (если в ней есть цифры в первых колонках)
-                    first_row_texts = [c.text.strip() for c in first_row_cells[:3]]
-                    # Если в первых колонках есть что-то похожее на номер и табельный - это данные
-                    has_number_like = any(
-                        cell and (cell.isdigit() or (len(cell) > 0 and cell[0].isdigit()))
-                        for cell in first_row_texts[1:3] if cell
-                    )
-                    if has_number_like:
-                        # Первая строка - это данные, начинаем с неё
-                        typical_start_row = 0
+                # Если таблица имеет хотя бы 3 колонки, пытаемся обработать
+                # (уменьшил до 3, так как минимально нужны: №, таб.№, фамилия)
+                if len(first_row_cells) >= 3:
+                    # Пробуем найти заголовок в первых строках по ключевым словам
+                    
+                    # Проверяем первые 5 строк на наличие заголовка
+                    for check_row_idx in range(min(5, len(table.rows))):
+                        check_row = table.rows[check_row_idx]
+                        check_cells = [c.text.strip().lower() for c in check_row.cells]
+                        # Ищем наличие слов "таб" и "фамилия" или "имя" в разных колонках
+                        has_tab_word = any("таб" in cell for cell in check_cells)
+                        has_name_words = any(
+                            any(word in cell for word in ["фамилия", "имя", "отчество", "фио"])
+                            for cell in check_cells
+                        )
+                        if has_tab_word and has_name_words:
+                            # Это похоже на заголовок, используем следующую строку как начало данных
+                            typical_start_row = check_row_idx + 1
+                            found_typical_format = True
+                            break
+                    
+                    # Если не нашли заголовок, определяем начало данных по содержимому
+                    if not found_typical_format:
+                        # Проверяем первые 3 строки, чтобы определить, где начинаются данные
+                        for check_row_idx in range(min(3, len(table.rows))):
+                            check_row = table.rows[check_row_idx]
+                            check_cells = check_row.cells
+                            if len(check_cells) >= 3:
+                                # Проверяем вторую и третью колонки на наличие цифр (табельный номер)
+                                col1_text = check_cells[1].text.strip() if len(check_cells) > 1 else ""
+                                col2_text = check_cells[2].text.strip() if len(check_cells) > 2 else ""
+                                # Если во второй или третьей колонке есть цифры - это данные
+                                has_digits = (
+                                    (col1_text and any(c.isdigit() for c in col1_text[:3])) or
+                                    (col2_text and any(c.isdigit() for c in col2_text[:3]))
+                                )
+                                # Проверяем, что это не заголовок (нет слов "таб", "фамилия" и т.д.)
+                                row_text_lower = " ".join([c.text.strip().lower() for c in check_cells[:5]])
+                                is_not_header = not any(word in row_text_lower for word in ["таб", "фамилия", "имя", "отчество", "фио", "№"])
+                                
+                                if has_digits and is_not_header:
+                                    # Это данные, начинаем с этой строки
+                                    typical_start_row = check_row_idx
+                                    found_typical_format = True
+                                    break
+                    
+                    # Если все еще не определили, пробуем начать со второй строки (первая может быть заголовком)
+                    if not found_typical_format:
+                        typical_start_row = 1
                         found_typical_format = True
                 
                 # Если нашли типовой формат или просто есть достаточно колонок, пробуем стандартный формат по позициям
-                if found_typical_format or len(first_row_cells) >= 5:
+                # Обрабатываем если есть хотя бы 3 колонки
+                if found_typical_format or len(first_row_cells) >= 3:
                     any_table_processed = True
                     created = 0
                     updated = 0
 
                     for row in table.rows[typical_start_row:]:
                         cells = row.cells
-                        # табельный номер предполагаем во второй колонке
-                        personnel_number = cells[1].text.strip() if len(cells) > 1 else ""
-                        last_name = cells[2].text.strip() if len(cells) > 2 else ""
-                        first_name = cells[3].text.strip() if len(cells) > 3 else ""
-                        middle_name = cells[4].text.strip() if len(cells) > 4 else ""
+                        if len(cells) < 2:
+                            continue
+                        
+                        # Пробуем разные варианты позиций столбцов
+                        # Вариант 1: № | таб.№ | фамилия | имя | отчество
+                        personnel_number = ""
+                        last_name = ""
+                        first_name = ""
+                        middle_name = ""
+                        
+                        # Табельный номер может быть в колонке 0, 1 или 2
+                        # Сначала проверяем колонку 1 (вторая колонка, после №)
+                        if len(cells) > 1:
+                            col1 = cells[1].text.strip()
+                            # Если в колонке 1 есть цифры - это табельный номер
+                            if col1 and any(c.isdigit() for c in col1[:5]):
+                                personnel_number = col1
+                                if len(cells) > 2:
+                                    last_name = cells[2].text.strip()
+                                if len(cells) > 3:
+                                    first_name = cells[3].text.strip()
+                                if len(cells) > 4:
+                                    middle_name = cells[4].text.strip()
+                            # Иначе проверяем колонку 2
+                            elif len(cells) > 2:
+                                col2 = cells[2].text.strip()
+                                if col2 and any(c.isdigit() for c in col2[:5]):
+                                    personnel_number = col2
+                                    if len(cells) > 3:
+                                        last_name = cells[3].text.strip()
+                                    if len(cells) > 4:
+                                        first_name = cells[4].text.strip()
+                                    if len(cells) > 5:
+                                        middle_name = cells[5].text.strip()
+                                else:
+                                    # Стандартный вариант: колонка 1 = таб.№, колонка 2 = фамилия
+                                    personnel_number = col1 if col1 else ""
+                                    last_name = col2 if col2 else ""
+                                    if len(cells) > 3:
+                                        first_name = cells[3].text.strip()
+                                    if len(cells) > 4:
+                                        middle_name = cells[4].text.strip()
+                            else:
+                                # Если только 2 колонки, пробуем: колонка 0 = таб.№, колонка 1 = ФИО
+                                if len(cells) > 0:
+                                    col0 = cells[0].text.strip()
+                                    if col0 and any(c.isdigit() for c in col0[:5]):
+                                        personnel_number = col0
+                                    if len(cells) > 1:
+                                        # Пробуем разбить ФИО на части
+                                        full_name_text = cells[1].text.strip()
+                                        if full_name_text:
+                                            name_parts = full_name_text.split()
+                                            if len(name_parts) >= 1:
+                                                last_name = name_parts[0]
+                                            if len(name_parts) >= 2:
+                                                first_name = name_parts[1]
+                                            if len(name_parts) >= 3:
+                                                middle_name = name_parts[2]
+                        
                         full_name = " ".join(
                             part
                             for part in [last_name, first_name, middle_name]
                             if part
                         ).strip()
 
+                        # Пропускаем пустые строки или строки без данных
                         if not full_name and not personnel_number:
+                            continue
+                        
+                        # Пропускаем строки, которые похожи на заголовки
+                        if full_name and any(word in full_name.lower() for word in ["таб", "фамилия", "имя", "отчество", "фио", "№", "номер"]):
                             continue
 
                         position = cells[5].text.strip() if len(cells) > 5 else ""

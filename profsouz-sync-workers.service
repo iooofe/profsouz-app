@@ -1,0 +1,24 @@
+[Unit]
+Description=Sync workers from Excel files for profsouz
+After=network.target
+
+[Service]
+Type=oneshot
+# Для /var/www/profsouz (стандартный путь)
+WorkingDirectory=/var/www/profsouz
+Environment="PATH=/var/www/profsouz/venv/bin"
+ExecStart=/var/www/profsouz/venv/bin/python /var/www/profsouz/manage.py create_users
+StandardOutput=journal
+StandardError=journal
+
+# Раскомментируйте и закомментируйте выше, если используете /home/profsouz/profsouz
+# User=profsouz
+# Group=profsouz
+# WorkingDirectory=/home/profsouz/profsouz
+# Environment="PATH=/home/profsouz/venv/bin"
+# EnvironmentFile=/home/profsouz/profsouz/.env
+# ExecStart=/home/profsouz/venv/bin/python /home/profsouz/profsouz/manage.py create_users
+
+[Install]
+WantedBy=multi-user.target
+

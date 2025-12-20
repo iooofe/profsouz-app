@@ -41,8 +41,14 @@ cd $PROJECT_DIR
 
 # Клонирование репозитория
 echo "📥 Клонирование репозитория..."
-GITHUB_TOKEN="${GITHUB_TOKEN:-}"
-git clone "https://${GITHUB_TOKEN}@github.com/iooofe/profsouz-app.git" .
+# GitHub token должен быть установлен как переменная окружения
+# export GITHUB_TOKEN="your_token_here"
+if [ -z "$GITHUB_TOKEN" ]; then
+    echo "⚠️  GITHUB_TOKEN не установлен, клонирую без токена..."
+    git clone "https://github.com/iooofe/profsouz-app.git" .
+else
+    git clone "https://${GITHUB_TOKEN}@github.com/iooofe/profsouz-app.git" .
+fi
 
 # Создание виртуального окружения
 VENV_DIR="$PROJECT_DIR/venv"

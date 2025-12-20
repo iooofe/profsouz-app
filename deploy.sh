@@ -12,6 +12,8 @@ DOMAIN="profsouz.com"
 WWW_DOMAIN="www.profsouz.com"
 PROJECT_DIR="/var/www/profsouz"
 VENV_DIR="$PROJECT_DIR/venv"
+# GitHub token должен быть установлен как переменная окружения
+# export GITHUB_TOKEN="your_token_here"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 
 # Обновление системы
@@ -33,7 +35,12 @@ if [ -d ".git" ]; then
     echo "Респозиторий уже существует, обновление..."
     git pull
 else
-    git clone "https://${GITHUB_TOKEN}@github.com/iooofe/profsouz-app.git" .
+    if [ -z "$GITHUB_TOKEN" ]; then
+        echo "⚠️  GITHUB_TOKEN не установлен, клонирую без токена..."
+        git clone "https://github.com/iooofe/profsouz-app.git" .
+    else
+        git clone "https://${GITHUB_TOKEN}@github.com/iooofe/profsouz-app.git" .
+    fi
 fi
 
 # Создание виртуального окружения
@@ -69,8 +76,8 @@ EOF
 echo "🗄️  Применение миграций..."
 python manage.py migrate
 
-# Создание пользователей
-echo "👤 Создание пользователей..."
+# Создание пользователей и импорт работников из Excel файлов
+echo "👤 Создание пользователей и импорт работников из Excel файлов..."
 python manage.py create_users
 
 # Сбор статических файлов

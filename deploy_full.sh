@@ -10,6 +10,8 @@ echo "🚀 Начало полного развертывания проекта
 PROJECT_DIR="/var/www/profsouz"
 DOMAIN="profsouz.kz"
 WWW_DOMAIN="www.profsouz.kz"
+# GitHub token должен быть установлен как переменная окружения
+# export GITHUB_TOKEN="your_token_here"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 
 # Шаг 1: Обновление системы
@@ -49,7 +51,12 @@ if [ -d ".git" ]; then
     git pull
 else
     echo "Клонирование репозитория..."
-    git clone "https://${GITHUB_TOKEN}@github.com/iooofe/profsouz-app.git" .
+    if [ -z "$GITHUB_TOKEN" ]; then
+        echo "⚠️  GITHUB_TOKEN не установлен, клонирую без токена..."
+        git clone "https://github.com/iooofe/profsouz-app.git" .
+    else
+        git clone "https://${GITHUB_TOKEN}@github.com/iooofe/profsouz-app.git" .
+    fi
 fi
 
 # Шаг 5: Создание виртуального окружения
@@ -83,19 +90,15 @@ echo "🗄️  Применение миграций базы данных..."
 source $VENV_DIR/bin/activate
 python manage.py migrate
 
-# Шаг 9: Создание пользователей
-echo "👤 Создание пользователей системы..."
-source $VENV_DIR/bin/activate
-python manage.py create_users
-
-# Шаг 9.5: Импорт работников из файлов
-echo "👥 Импорт работников из файлов..."
+# Шаг 9: Создание пользователей и импорт работников из Excel файлов
+echo "👤 Создание пользователей и импорт работников из Excel файлов..."
 source $VENV_DIR/bin/activate
 if [ -d "$PROJECT_DIR/работники" ] || [ -d "$PROJECT_DIR/работники " ]; then
-    python manage.py import_workers_from_files
-    echo "✅ Импорт работников завершен"
+    python manage.py create_users
+    echo "✅ Пользователи и работники созданы из Excel файлов"
 else
-    echo "⚠️  Папка 'работники' не найдена, пропускаю импорт"
+    echo "⚠️  Папка 'работники' не найдена, создаю только пользователей без работников"
+    python manage.py create_users
 fi
 
 # Шаг 10: Создание необходимых директорий (до collectstatic)
@@ -140,6 +143,17 @@ chown www-data:www-data /var/log/gunicorn
 # Шаг 15: Настройка Supervisor для Gunicorn
 echo "⚙️  Настройка Supervisor..."
 cp $PROJECT_DIR/gunicorn_profsouz.conf /etc/supervisor/conf.d/profsouz.conf
+
+# Шаг 15.5: Настройка автоматической синхронизации работников (опционально)
+echo "⚙️  Настройка автоматической синхронизации работников..."
+if [ -f "$PROJECT_DIR/profsouz-sync-workers.service" ]; then
+    cp $PROJECT_DIR/profsouz-sync-workers.service /etc/systemd/system/
+    systemctl daemon-reload
+    systemctl enable profsouz-sync-workers.service
+    echo "✅ Сервис синхронизации работников установлен (запускается при старте системы)"
+    echo "   Для запуска вручную: systemctl start profsouz-sync-workers.service"
+    echo "   Для просмотра логов: journalctl -u profsouz-sync-workers.service -f"
+fi
 
 # Шаг 16: Запуск сервисов
 echo "🚀 Запуск сервисов..."

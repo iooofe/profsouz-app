@@ -1210,7 +1210,7 @@ select:focus {
     transition: all var(--transition-smooth);
     margin-bottom: var(--spacing-lg);
     position: relative;
-    overflow: visible;
+    overflow: hidden;
     /* Базовый слой секции форм, чтобы автодополнение не перекрывалось соседними блоками */
     z-index: 1;
     /* Предотвращаем выход элементов за границы при hover */
@@ -1228,6 +1228,8 @@ select:focus {
     transform: scaleY(0);
     transform-origin: top;
     transition: transform var(--transition-smooth);
+    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+    z-index: 1;
 }
 
 .form-section:hover::before {
@@ -1246,6 +1248,8 @@ select:focus {
     z-index: 5;
     /* Убираем contain при hover для корректной работы выпадающих списков */
     contain: none;
+    /* Разрешаем overflow для выпадающих списков при hover */
+    overflow: visible;
 }
 
 /* Специальная стилизация для секции пенсионеров */
