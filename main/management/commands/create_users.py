@@ -48,7 +48,76 @@ class Command(BaseCommand):
         "phone": ["телефон", "моб. телефон", "тел./моб."],
     }
 
+    # Соответствие имени файла пользователю в системе
+    FILE_USER_MAP = {
+        "УМТС и 1": "УМТС",
+        "УМТС": "УМТС",
+        "УСШМД": "УСШМД",
+        "УТТ": "УТТ",
+        "ЦОФ Восточная": "Цоф Восточная",
+        "ЦОФ ВОСТОЧНАЯ": "Цоф Восточная",
+        "ш.Абайская": "ш. Абайская",
+        "ш.АБАЙСКАЯ": "ш. Абайская",
+        "ш.Казахстанская": "Ш. Казахстанская",
+        "ш.КАЗАХСТАНСКАЯ": "Ш. Казахстанская",
+        "ш.Костенко": "ш. Костенко",
+        "ш.КОСТЕНКО": "ш. Костенко",
+        "ш.Кузембаева": "ш. Кузембаева",
+        "ш.КУЗЕМБАЕВА": "ш. Кузембаева",
+        "ш.Ленина": "Ш. Ленина",
+        "ш.ЛЕНИНА": "Ш. Ленина",
+        "ш.Саранская": "ш. Саранская",
+        "ш.САРАНСКАЯ": "ш. Саранская",
+        "ш.Тентекская": "ш. Тентекская",
+        "ш.ТЕНТЕКСКАЯ": "ш. Тентекская",
+        "ш.Шахтинская": "ш. Шахтинская",
+        "ш.ШАХТИНСКАЯ": "ш. Шахтинская",
+    }
+
     def handle(self, *args, **options):
+        # Сначала создаем заранее определенных пользователей
+        users_data = [
+            ('КПТУ', 'change-me'),
+            ('УТТ', 'change-me'),
+            ('Ш. Ленина', 'change-me'),
+            ('Ш. Казахстанская', 'change-me'),
+            ('ш. Костенко', 'change-me'),
+            ('ш. Тентекская', 'change-me'),
+            ('ш. Шахтинская', 'change-me'),
+            ('ш. Абайская', 'change-me'),
+            ('ш. Саранская', 'change-me'),
+            ('ш. Кузембаева', 'change-me'),
+            ('Энергоуголь', 'change-me'),
+            ('ТОО Куpылыш мет', 'change-me'),
+            ('УСШМД', 'change-me'),
+            ('Цоф Восточная', 'change-me'),
+            ('УМТС', 'change-me'),
+            ('ГУ', 'change-me'),
+            ('АДМИН', 'change-me'),
+        ]
+
+        total_users_created = 0
+        total_users_updated = 0
+
+        # Создаем всех заранее определенных пользователей
+        for username, password in users_data:
+            user, created = User.objects.get_or_create(username=username)
+            if created:
+                user.set_password(password)
+                user.save()
+                total_users_created += 1
+                self.stdout.write(
+                    self.style.SUCCESS(f'✓ Создан пользователь: {username}')
+                )
+            else:
+                user.set_password(password)
+                user.save()
+                total_users_updated += 1
+                self.stdout.write(
+                    self.style.WARNING(f'↻ Обновлен пароль для: {username}')
+                )
+
+        # Теперь импортируем работников из Excel файлов
         base_dir = Path(settings.BASE_DIR)
 
         # Ищем папку "работники" независимо от лишних пробелов в имени
@@ -60,8 +129,13 @@ class Command(BaseCommand):
 
         if not workers_dir:
             self.stdout.write(
-                self.style.ERROR(
-                    f"Папка 'работники' не найдена в {base_dir}. Убедитесь, что она существует."
+                self.style.WARNING(
+                    f"\nПапка 'работники' не найдена в {base_dir}. Пропускаю импорт работников."
+                )
+            )
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"\nГотово! Пользователей: создано {total_users_created}, обновлено {total_users_updated}"
                 )
             )
             return
@@ -70,44 +144,44 @@ class Command(BaseCommand):
         if not files:
             self.stdout.write(
                 self.style.WARNING(
-                    f"В папке {workers_dir} не найдено файлов .xlsx для импорта"
+                    f"\nВ папке {workers_dir} не найдено файлов .xlsx для импорта"
+                )
+            )
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"\nГотово! Пользователей: создано {total_users_created}, обновлено {total_users_updated}"
                 )
             )
             return
 
-        total_users_created = 0
-        total_users_updated = 0
         total_workers_created = 0
         total_workers_updated = 0
 
         for file_path in files:
-            # Название файла (без расширения) = имя аккаунта
-            username = file_path.stem.strip()
+            # Название файла (без расширения)
+            file_name = file_path.stem.strip()
+            
+            # Находим соответствующего пользователя по маппингу
+            username = self.FILE_USER_MAP.get(file_name)
             
             if not username:
                 self.stdout.write(
                     self.style.WARNING(
-                        f"Пропускаю файл {file_path.name}: пустое имя файла"
+                        f"\nПропускаю файл {file_path.name}: нет соответствующего пользователя в FILE_USER_MAP"
                     )
                 )
                 continue
 
-            # Создаем или получаем пользователя
-            user, user_created = User.objects.get_or_create(username=username)
-            default_password = f"{username}-change-me"
-            user.set_password(default_password)
-            user.save()
-
-            if user_created:
-                total_users_created += 1
+            # Получаем пользователя (он должен быть уже создан выше)
+            try:
+                user = User.objects.get(username=username)
+            except User.DoesNotExist:
                 self.stdout.write(
-                    self.style.SUCCESS(f"✓ Создан пользователь: {username}")
+                    self.style.ERROR(
+                        f"\nПользователь {username} не найден! Пропускаю файл {file_path.name}"
+                    )
                 )
-            else:
-                total_users_updated += 1
-                self.stdout.write(
-                    self.style.WARNING(f"↻ Обновлен пароль для: {username}")
-                )
+                continue
 
             # Импортируем работников из файла
             self.stdout.write(
