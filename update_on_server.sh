@@ -15,6 +15,13 @@ git pull
 echo "📦 Обновление зависимостей (если нужно)..."
 pip install -r requirements.txt --quiet
 
+echo "💾 Создание резервной копии базы данных..."
+BACKUP_DIR="/var/www/profsouz/backups"
+mkdir -p $BACKUP_DIR
+BACKUP_FILE="$BACKUP_DIR/db_backup_$(date +%Y%m%d_%H%M%S).sqlite3"
+cp db.sqlite3 "$BACKUP_FILE"
+echo "✅ Резервная копия создана: $BACKUP_FILE"
+
 echo "🗄️  Применение миграций..."
 python manage.py migrate
 
