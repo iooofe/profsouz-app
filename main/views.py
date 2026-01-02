@@ -10,7 +10,7 @@ from django.utils import timezone
 from datetime import datetime, date
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml.ns import qn
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -143,17 +143,23 @@ def index(request):
         all_workers = Worker.objects.filter(user=request.user)
     
     workers = all_workers
-    search_query = request.GET.get('search', '')
+    search_query = request.GET.get('search', '').strip()
     
     if search_query:
-        workers = workers.filter(
-            Q(full_name__icontains=search_query) |
-            Q(personnel_number__icontains=search_query) |
-            Q(inn__icontains=search_query) |
-            Q(department__icontains=search_query) |
-            Q(position__icontains=search_query) |
-            Q(phone__icontains=search_query)
-        )
+        # SQLite не поддерживает регистронезависимый поиск для кириллицы через __icontains
+        # Поэтому получаем всех работников и фильтруем в Python
+        search_lower = search_query.lower()
+        workers_list = list(workers)
+        workers_filtered = []
+        for worker in workers_list:
+            if (search_lower in (worker.full_name or '').lower() or
+                search_lower in (worker.personnel_number or '').lower() or
+                search_lower in (worker.inn or '').lower() or
+                search_lower in (worker.department or '').lower() or
+                search_lower in (worker.position or '').lower() or
+                search_lower in (worker.phone or '').lower()):
+                workers_filtered.append(worker.id)
+        workers = workers.filter(id__in=workers_filtered)
     
     worker_form = WorkerForm()
     
@@ -200,15 +206,22 @@ def index(request):
         coal_requests = CoalRequest.objects.filter(worker__user=request.user).select_related('worker').order_by('-created_at')
         funeral_requests = FuneralRequest.objects.filter(worker__user=request.user).select_related('worker').order_by('-created_at')
     
-    # Получаем информацию о лимите (для админа лимит не нужен)
+    # Получаем информацию о лимитах (для админа лимит не нужен)
     if user_is_admin:
-        limit = None
-        used_places = 0
-        remaining_places = 999999  # Неограниченно для админа
+        zhartas_limit = None
+        zhartas_used_places = 0
+        zhartas_remaining_places = 999999  # Неограниченно для админа
+        shakhter_limit = None
+        shakhter_used_places = 0
+        shakhter_remaining_places = 999999  # Неограниченно для админа
     else:
-        limit, created = VacationLimit.get_or_create_limit(request.user)
-        used_places = limit.get_used_places()
-        remaining_places = limit.get_remaining_places()
+        zhartas_limit, created = VacationLimit.get_or_create_limit(request.user, 'zhartas')
+        zhartas_used_places = zhartas_limit.get_used_places()
+        zhartas_remaining_places = zhartas_limit.get_remaining_places()
+        
+        shakhter_limit, created = VacationLimit.get_or_create_limit(request.user, 'shakhter')
+        shakhter_used_places = shakhter_limit.get_used_places()
+        shakhter_remaining_places = shakhter_limit.get_remaining_places()
     
     # Получаем данные для ведомости Жартас
     period_start, period_end = get_statement_period()
@@ -347,9 +360,12 @@ def index(request):
         'material_assistance_form': MaterialAssistanceRequestForm(),
         'coal_request_form': CoalRequestForm(),
         'funeral_request_form': FuneralRequestForm(),
-        'vacation_limit': limit,
-        'used_places': used_places,
-        'remaining_places': remaining_places,
+        'zhartas_limit': zhartas_limit,
+        'zhartas_used_places': zhartas_used_places,
+        'zhartas_remaining_places': zhartas_remaining_places,
+        'shakhter_limit': shakhter_limit,
+        'shakhter_used_places': shakhter_used_places,
+        'shakhter_remaining_places': shakhter_remaining_places,
         'user_is_admin': user_is_admin,
         'zhartas_statement_data': zhartas_statement_data,
         'zhartas_statement_total_sum': zhartas_total_sum,
@@ -409,11 +425,15 @@ def worker_detail(request, worker_id):
         'death_certificate_file_name': worker.death_certificate_file.name.split('/')[-1] if worker.death_certificate_file else None,
         'family_members': [
             {
+                'id': fm.id,
                 'full_name': fm.full_name,
                 'relationship': fm.get_relationship_display(),
+                'relationship_code': fm.relationship,
                 'id_number': fm.id_number or '—',
                 'id_issue_date': fm.id_issue_date.strftime('%d.%m.%Y') if fm.id_issue_date else '—',
                 'id_issued_by': fm.id_issued_by or '—',
+                'birth_date': fm.birth_date.strftime('%Y-%m-%d') if fm.birth_date else None,
+                'age': fm.get_age() if fm.birth_date else None,
             }
             for fm in family_members
         ]
@@ -450,6 +470,7 @@ def worker_edit(request, worker_id):
                         'id_number': request.POST.get(f'family_{i}_id_number', ''),
                         'id_issue_date': request.POST.get(f'family_{i}_id_issue_date', '') or None,
                         'id_issued_by': request.POST.get(f'family_{i}_id_issued_by', ''),
+                        'birth_date': request.POST.get(f'family_{i}_birth_date', '') or None,
                     })
                     if family_form.is_valid():
                         family_member = family_form.save(commit=False)
@@ -502,15 +523,20 @@ def search_workers(request):
         workers = Worker.objects.filter(user=request.user)
     
     if query:
-        # Ищем по ФИО, табельному номеру, ИИН, участку, должности, телефону
-        workers = workers.filter(
-            Q(full_name__icontains=query) |
-            Q(personnel_number__icontains=query) |
-            Q(inn__icontains=query) |
-            Q(department__icontains=query) |
-            Q(position__icontains=query) |
-            Q(phone__icontains=query)
-        )
+        # SQLite не поддерживает регистронезависимый поиск для кириллицы через __icontains
+        # Поэтому получаем всех работников и фильтруем в Python
+        query_lower = query.lower()
+        workers_list = list(workers)
+        workers_filtered = []
+        for worker in workers_list:
+            if (query_lower in (worker.full_name or '').lower() or
+                query_lower in (worker.personnel_number or '').lower() or
+                query_lower in (worker.inn or '').lower() or
+                query_lower in (worker.department or '').lower() or
+                query_lower in (worker.position or '').lower() or
+                query_lower in (worker.phone or '').lower()):
+                workers_filtered.append(worker.id)
+        workers = workers.filter(id__in=workers_filtered)
     else:
         # Если запрос пустой, возвращаем всех работников (для обновления таблицы)
         pass
@@ -566,6 +592,7 @@ def get_worker_with_family(request, worker_id):
         'personnel_number': worker.personnel_number,
         'inn': worker.inn or '',
         'status': worker.get_status_display(),
+        'status_code': worker.status,  # Добавляем код статуса для проверки
         'department': worker.department,
         'position': worker.position,
         'phone': worker.phone or '',
@@ -612,6 +639,12 @@ def create_vacation_request(request):
         start_date_str = request.POST.get('start_date')
         end_date_str = request.POST.get('end_date')
         
+        # Проверка: пенсионеры не могут создавать заявления на Балхаш и Дискавери
+        if worker.status == 'pensioner' and resort in ['balkhash', 'discovery']:
+            resort_name = dict(VacationRequest.RESORT_CHOICES).get(resort, resort)
+            messages.error(request, f'Пенсионеры не могут создавать заявления на курорт "{resort_name}"!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
+        
         # Валидация данных
         if not resort:
             messages.error(request, 'Не выбран курорт!')
@@ -630,34 +663,80 @@ def create_vacation_request(request):
             messages.error(request, f'Неверный формат даты: {str(date_error)}')
             return redirect(f"{reverse('main:index')}?tab=applications")
         
+        # Получаем список выбранных членов семьи (нужно для всех пользователей)
+        family_member_ids = request.POST.getlist('family_members')
+        
+        # Проверяем возраст детей/внуков
+        if family_member_ids:
+            family_members = FamilyMember.objects.filter(
+                id__in=family_member_ids,
+                worker=worker
+            )
+            
+            for fm in family_members:
+                # Проверяем только детей и внуков/внучек
+                if fm.is_child_or_grandchild():
+                    if not fm.birth_date:
+                        messages.error(
+                            request,
+                            f'Для {fm.get_relationship_display().lower()} {fm.full_name} необходимо указать дату рождения!'
+                        )
+                        return redirect(f"{reverse('main:index')}?tab=applications")
+                    
+                    age = fm.get_age()
+                    if age is None:
+                        continue
+                    
+                    # Для ДОЦ "Орленок" - проверка на 14 лет
+                    if resort == 'orlenok' and age >= 14:
+                        messages.error(
+                            request,
+                            f'{fm.get_relationship_display()} {fm.full_name} не проходит по возрасту для ДОЦ "Орленок" (возраст {age} лет, требуется до 14 лет).'
+                        )
+                        return redirect(f"{reverse('main:index')}?tab=applications")
+                    
+                    # Для остальных курортов - проверка на 18 лет и обязательный файл
+                    if resort != 'orlenok' and age >= 18:
+                        study_certificate = request.FILES.get('study_certificate_file')
+                        if not study_certificate:
+                            messages.error(
+                                request,
+                                f'Для {fm.get_relationship_display().lower()} {fm.full_name} старше 18 лет (возраст {age} лет) необходимо прикрепить справку об очном обучении!'
+                            )
+                            return redirect(f"{reverse('main:index')}?tab=applications")
+        
         # Проверяем лимит (для админа лимит не нужен)
         if not user_is_admin:
             from main.models import VacationLimit
-            limit, created = VacationLimit.get_or_create_limit(request.user)
+            limit, created = VacationLimit.get_or_create_limit(request.user, resort)
             
             # Подсчитываем количество мест для нового заявления
-            family_member_ids = request.POST.getlist('family_members')
             new_places = 1 + len(family_member_ids)  # 1 за работника + по 1 за каждого члена семьи
             
             used_places = limit.get_used_places()
             remaining_places = limit.get_remaining_places()
             
             if new_places > remaining_places:
+                resort_name = dict(VacationRequest.RESORT_CHOICES).get(resort, resort)
                 messages.error(
                     request, 
-                    f'Превышен лимит на путевки! Доступно мест: {remaining_places}, требуется: {new_places}. '
+                    f'Превышен лимит на путевки для {resort_name}! Доступно мест: {remaining_places}, требуется: {new_places}. '
                     f'Использовано: {used_places}/{limit.limit}'
                 )
                 return redirect(f"{reverse('main:index')}?tab=applications")
         
         # Создаем заявление напрямую
         try:
+            # Получаем файл справки об очном обучении (если есть)
+            study_certificate_file = request.FILES.get('study_certificate_file')
+            
             vacation = VacationRequest.objects.create(
                 user=request.user,
                 worker=worker,
                 resort=resort,
                 start_date=start_date,
-                end_date=end_date
+                end_date=end_date,
+                study_certificate_file=study_certificate_file
             )
             
             # Добавляем выбранных членов семьи
@@ -713,6 +792,8 @@ def vacation_request_detail(request, request_id):
     data = {
         'id': vacation.id,
         'type': 'Путевка',
+        'study_certificate_file': vacation.study_certificate_file.url if vacation.study_certificate_file else None,
+        'study_certificate_file_name': vacation.study_certificate_file.name.split('/')[-1] if vacation.study_certificate_file else None,
         'worker': {
             'id': vacation.worker.id,  # ID работника для перехода к карточке
             'full_name': vacation.worker.full_name,
@@ -822,7 +903,7 @@ def generate_vacation_request_preview(vacation):
             <div>Прошу выделить {people_count} путевку(ки) в {resort_name}</div>
             <div>Сроком {days} дней с {start_date_str} года.</div>
                 <div>Отпуск с «______» ______ 201__ г..</div>
-            {f'<div>{family_names}</div>' if family_names else ''}
+            {f'<div>{family_names} (членам семьи)</div>' if family_names else ''}
             <div>Прошу Вас удержать из моей заработной платы, внести стоимость путевки (ок) {price_str} в сумме тенге.</div>
             <div>Я, {vacation.worker.full_name} обязуюсь использовать выделенную и выданную мне на Предприятии льготную путевку в количестве {people_count} штук, в {resort_name} по личному и целевому назначению.</div>
             <div>Я предупрежден, что в случае передачи льготной путевки (-ок) постороннему или другому лицу, а также в случае отказа без уважительной причины от предоставленной мне путевки (-ок) будет произведено удержание <strong>полной стоимости</strong> путевки из моей заработной платы по предъявлению Работодателя.</div>
@@ -893,6 +974,11 @@ def generate_vacation_request_docx(vacation):
     font = style.font
     font.name = 'Times New Roman'
     font.size = Pt(11)
+    # Убираем интервалы между параграфами
+    paragraph_format = style.paragraph_format
+    paragraph_format.space_before = Pt(0)
+    paragraph_format.space_after = Pt(0)
+    paragraph_format.line_spacing = 1.0
     
     # Заголовок справа
     header_para = doc.add_paragraph()
@@ -927,7 +1013,7 @@ def generate_vacation_request_docx(vacation):
     start_date_str = vacation.start_date.strftime('%d.%m.%Y')
     price_str = f"{int(vacation.price)}" if vacation.price else "—"
     
-    # Формируем текст заявления с сохранением структуры строк
+    # Формируем текст заявления с сохранением структуры строк (точно как в предпросмотре)
     request_para1 = doc.add_paragraph()
     request_para1.add_run(f'Прошу выделить {people_count} путевку(ки) в {resort_name}')
     
@@ -937,11 +1023,11 @@ def generate_vacation_request_docx(vacation):
     request_para3 = doc.add_paragraph()
     request_para3.add_run('Отпуск с «______» ______ 201__ г..')
     
-    # Члены семьи (если есть)
+    # Члены семьи (если есть) - сразу после строки "Отпуск с..."
     if vacation.family_members.exists():
         family_para = doc.add_paragraph()
         family_names = ', '.join([fm.full_name for fm in vacation.family_members.all()])
-        family_para.add_run(family_names)
+        family_para.add_run(f'{family_names} (членам семьи)')
     
     # Прошу Вас удержать
     request_para4 = doc.add_paragraph()
@@ -963,20 +1049,25 @@ def generate_vacation_request_docx(vacation):
     request_para7 = doc.add_paragraph()
     request_para7.add_run('С таким удержанием я согласен.')
     
-    # Удостоверение личности
-    id_info = f'{vacation.worker.id_number or "—"}'
+    # Удостоверение личности (в скобках, как в предпросмотре)
+    id_info = ''
+    if vacation.worker.id_number:
+        id_info = vacation.worker.id_number
     if vacation.worker.id_issue_date:
         id_info += f', {vacation.worker.id_issue_date.strftime("%d.%m.%Y")}'
     if vacation.worker.id_issued_by:
         id_info += f', {vacation.worker.id_issued_by}'
     
     request_para8 = doc.add_paragraph()
-    request_para8.add_run(f'({id_info})')
+    request_para8.add_run(f'({id_info or "—"})')
     
-    # Пустая строка
-    doc.add_paragraph()
+    # Добавляем пустые строки, чтобы переместить подписи и примечание вниз того же листа
+    for _ in range(15):  # Добавляем достаточно пустых строк
+        empty_para = doc.add_paragraph()
+        empty_para.paragraph_format.space_after = Pt(0)
+        empty_para.paragraph_format.space_before = Pt(0)
     
-    # Подписи справа
+    # Подписи справа (внизу страницы)
     signature_para1 = doc.add_paragraph()
     signature_para1.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     signature_para1.add_run('Дата ________')
@@ -989,11 +1080,11 @@ def generate_vacation_request_docx(vacation):
     signature_para3.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     signature_para3.add_run('Подпись ответственного лица________')
     
-    # Примечание
+    # Примечание (увеличенный размер шрифта)
     doc.add_paragraph()
     note_para = doc.add_paragraph()
     note_run = note_para.add_run('Примечание: Заявление по прилагаемой форме пишется собственноручно заявителем при оформлении документов на поручение льготной путевки в санатории и дом отдыха. Подпись заявителя заверяется ответственным лицом за реализацию, распределение и выдачу путевок в структурном подразделении.')
-    note_run.font.size = Pt(8)
+    note_run.font.size = Pt(10)
     note_run.italic = True
     
     # Сохраняем в BytesIO
@@ -1110,7 +1201,7 @@ def download_vacation_request(request, request_id):
     
     # Выбираем шаблон в зависимости от курорта
     if vacation.resort in ['zhartas', 'shakhter']:
-        buffer = generate_vacation_request_docx_standard(vacation)
+        buffer = generate_vacation_request_docx(vacation)
     else:
         buffer = generate_vacation_request_docx_standard(vacation)
     
@@ -1132,10 +1223,37 @@ def download_vacation_request(request, request_id):
 
 
 @login_required
+def download_study_certificate(request, request_id):
+    """Скачивание справки об очном обучении"""
+    vacation = get_object_or_404(VacationRequest, id=request_id, user=request.user)
+    
+    if not vacation.study_certificate_file:
+        messages.error(request, 'Справка об очном обучении не найдена!')
+        return redirect(f"{reverse('main:index')}?tab=reports")
+    
+    response = FileResponse(
+        vacation.study_certificate_file.open('rb'),
+        content_type='application/octet-stream'
+    )
+    
+    filename = vacation.study_certificate_file.name.split('/')[-1]
+    safe_filename = transliterate_filename(filename)
+    response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
+    
+    return response
+
+
+@login_required
 def set_vacation_limit(request):
     """Установка или увеличение лимита на путевки"""
     if request.method == 'POST':
         new_limit = request.POST.get('limit')
+        resort = request.POST.get('resort', 'zhartas')  # По умолчанию Жартас
+        
+        # Проверяем, что resort валидный
+        if resort not in ['zhartas', 'shakhter']:
+            messages.error(request, 'Некорректный курорт!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
         
         try:
             new_limit = int(new_limit)
@@ -1145,24 +1263,26 @@ def set_vacation_limit(request):
             messages.error(request, 'Некорректное значение лимита!')
             return redirect(f"{reverse('main:index')}?tab=applications")
         
-        limit, created = VacationLimit.get_or_create_limit(request.user)
+        limit, created = VacationLimit.get_or_create_limit(request.user, resort)
+        
+        resort_name = dict(VacationLimit.RESORT_CHOICES).get(resort, resort)
         
         if created or limit.limit == 0:
             # Первая установка лимита
             limit.limit = new_limit
             limit.is_initial = True
             limit.save()
-            messages.success(request, f'Лимит установлен: {new_limit} мест')
+            messages.success(request, f'Лимит для {resort_name} установлен: {new_limit} мест')
         else:
             # Увеличение лимита
             if new_limit < limit.limit:
-                messages.error(request, f'Можно только увеличить лимит! Текущий лимит: {limit.limit}')
+                messages.error(request, f'Можно только увеличить лимит! Текущий лимит для {resort_name}: {limit.limit}')
                 return redirect(f"{reverse('main:index')}?tab=applications")
             
             limit.limit = new_limit
             limit.is_initial = False
             limit.save()
-            messages.success(request, f'Лимит увеличен до: {new_limit} мест')
+            messages.success(request, f'Лимит для {resort_name} увеличен до: {new_limit} мест')
         
         return redirect(f"{reverse('main:index')}?tab=applications")
     

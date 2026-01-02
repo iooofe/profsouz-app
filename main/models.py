@@ -67,7 +67,7 @@ class Worker(models.Model):
     address = models.TextField('Адрес', blank=True)
     
     # Удостоверение личности
-    id_number = models.CharField('Удостоверение личности', max_length=50, blank=True)
+    id_number = models.CharField('Удостоверение личности', max_length=50)
     id_issue_date = models.DateField('Дата выдачи удо', null=True, blank=True)
     id_issued_by = models.CharField('Кем выдано удо', max_length=200, blank=True)
     
@@ -111,6 +111,7 @@ class FamilyMember(models.Model):
         ('child', 'Ребенок'),
         ('parent', 'Родитель'),
         ('sibling', 'Брат/Сестра'),
+        ('grandchild', 'Внук/Внучка'),
         ('other', 'Другое'),
     ]
     
@@ -120,6 +121,20 @@ class FamilyMember(models.Model):
     id_number = models.CharField('Удостоверение личности', max_length=50, blank=True)
     id_issue_date = models.DateField('Дата выдачи удо', null=True, blank=True)
     id_issued_by = models.CharField('Кем выдано удо', max_length=200, blank=True)
+    birth_date = models.DateField('Дата рождения', null=True, blank=True, help_text='Обязательно для детей и внуков/внучек')
+    
+    def get_age(self):
+        """Возвращает возраст члена семьи"""
+        if not self.birth_date:
+            return None
+        from datetime import date
+        today = date.today()
+        age = today.year - self.birth_date.year - ((today.month, today.day) < (self.birth_date.month, self.birth_date.day))
+        return age
+    
+    def is_child_or_grandchild(self):
+        """Проверяет, является ли член семьи ребенком или внуком/внучкой"""
+        return self.relationship in ['child', 'grandchild']
     
     class Meta:
         verbose_name = 'Член семьи'
@@ -148,6 +163,7 @@ class VacationRequest(models.Model):
     end_date = models.DateField('Дата окончания поездки')
     price = models.DecimalField('Цена путевки', max_digits=10, decimal_places=2, null=True, blank=True)
     is_rejected = models.BooleanField('Отказ от поездки', default=False)
+    study_certificate_file = models.FileField('Справка об очном обучении', upload_to='vacation/study_certificates/', null=True, blank=True, help_text='Обязательно для детей/внуков старше 18 лет')
     created_at = models.DateTimeField('Дата создания', auto_now_add=True)
     updated_at = models.DateTimeField('Дата обновления', auto_now=True)
     
@@ -168,6 +184,10 @@ class VacationRequest(models.Model):
     def get_status(self):
         """Возвращает статус путевки в зависимости от даты"""
         if self.is_rejected:
+            return 'cancelled'
+        
+        # Если пенсионер умер, все его заявления неактивны
+        if self.worker.status == 'pensioner' and self.worker.is_dead:
             return 'cancelled'
         
         from django.utils import timezone
@@ -194,6 +214,9 @@ class VacationRequest(models.Model):
     def get_places_count(self):
         """Возвращает количество мест, занимаемых этой путевкой"""
         if self.is_rejected:
+            return 0
+        # Если пенсионер умер, все его заявления неактивны и не занимают места
+        if self.worker.status == 'pensioner' and self.worker.is_dead:
             return 0
         # 1 место за работника + 1 место за каждого члена семьи
         return 1 + self.family_members.count()
@@ -248,6 +271,22 @@ class MaterialAssistanceRequest(models.Model):
     
     def __str__(self):
         return f"Материальная помощь {self.worker.full_name} - {self.get_assistance_type_display()}"
+    
+    def get_status(self):
+        """Возвращает статус заявления"""
+        # Если пенсионер умер, все его заявления неактивны
+        if self.worker.status == 'pensioner' and self.worker.is_dead:
+            return 'cancelled'
+        return 'active'
+    
+    def get_status_display_text(self):
+        """Возвращает текстовое представление статуса"""
+        status = self.get_status()
+        status_map = {
+            'cancelled': 'Отменено',
+            'active': 'Активно',
+        }
+        return status_map.get(status, 'Неизвестно')
 
 
 class CoalRequest(models.Model):
@@ -274,6 +313,22 @@ class CoalRequest(models.Model):
     
     def __str__(self):
         return f"Заявление на уголь {self.worker.full_name} - {self.created_at.strftime('%d.%m.%Y')}"
+    
+    def get_status(self):
+        """Возвращает статус заявления"""
+        # Если пенсионер умер, все его заявления неактивны
+        if self.worker.status == 'pensioner' and self.worker.is_dead:
+            return 'cancelled'
+        return 'active'
+    
+    def get_status_display_text(self):
+        """Возвращает текстовое представление статуса"""
+        status = self.get_status()
+        status_map = {
+            'cancelled': 'Отменено',
+            'active': 'Активно',
+        }
+        return status_map.get(status, 'Неизвестно')
 
 
 class FuneralRequest(models.Model):
@@ -302,11 +357,33 @@ class FuneralRequest(models.Model):
     
     def __str__(self):
         return f"Заявление на погребение {self.worker.full_name} - {self.created_at.strftime('%d.%m.%Y')}"
+    
+    def get_status(self):
+        """Возвращает статус заявления"""
+        # Если пенсионер умер, все его заявления неактивны
+        if self.worker.status == 'pensioner' and self.worker.is_dead:
+            return 'cancelled'
+        return 'active'
+    
+    def get_status_display_text(self):
+        """Возвращает текстовое представление статуса"""
+        status = self.get_status()
+        status_map = {
+            'cancelled': 'Отменено',
+            'active': 'Активно',
+        }
+        return status_map.get(status, 'Неизвестно')
 
 
 class VacationLimit(models.Model):
     """Лимит на путевки для пользователя"""
+    RESORT_CHOICES = [
+        ('zhartas', 'Санаторий "Жартас"'),
+        ('shakhter', 'Дом отдыха "Шахтер"'),
+    ]
+    
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='vacation_limits', verbose_name='Пользователь')
+    resort = models.CharField('Курорт', max_length=50, choices=RESORT_CHOICES, default='zhartas')
     limit = models.PositiveIntegerField('Лимит', default=0)
     period_start = models.DateField('Начало периода (18 число месяца)')
     created_at = models.DateTimeField('Дата создания', auto_now_add=True)
@@ -316,11 +393,11 @@ class VacationLimit(models.Model):
     class Meta:
         verbose_name = 'Лимит на путевки'
         verbose_name_plural = 'Лимиты на путевки'
-        unique_together = [['user', 'period_start']]
+        unique_together = [['user', 'period_start', 'resort']]
         ordering = ['-period_start']
     
     def __str__(self):
-        return f"Лимит {self.user.username} - {self.period_start}: {self.limit}"
+        return f"Лимит {self.user.username} - {self.get_resort_display()} - {self.period_start}: {self.limit}"
     
     @staticmethod
     def get_current_period_start():
@@ -342,18 +419,19 @@ class VacationLimit(models.Model):
         return period_start
     
     @staticmethod
-    def get_or_create_limit(user):
-        """Получает или создает лимит для текущего периода"""
+    def get_or_create_limit(user, resort='zhartas'):
+        """Получает или создает лимит для текущего периода и указанного курорта"""
         period_start = VacationLimit.get_current_period_start()
         limit, created = VacationLimit.objects.get_or_create(
             user=user,
             period_start=period_start,
+            resort=resort,
             defaults={'limit': 0, 'is_initial': True}
         )
         return limit, created
     
     def get_used_places(self):
-        """Возвращает количество использованных мест в текущем периоде"""
+        """Возвращает количество использованных мест в текущем периоде для данного курорта"""
         period_start = self.period_start
         # Период заканчивается 17 числа следующего месяца
         if period_start.month == 12:
@@ -361,9 +439,10 @@ class VacationLimit(models.Model):
         else:
             period_end = date(period_start.year, period_start.month + 1, 17)
         
-        # Получаем все неотмененные заявления в этом периоде
+        # Получаем все неотмененные заявления в этом периоде для данного курорта
         requests = VacationRequest.objects.filter(
             user=self.user,
+            resort=self.resort,
             created_at__date__gte=period_start,
             created_at__date__lte=period_end,
             is_rejected=False

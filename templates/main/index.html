@@ -34,15 +34,17 @@
                     <h2 class="tab-title">Заявления</h2>
                     
                     <!-- Блок лимитов -->
+                    {% if not user_is_admin %}
+                    <!-- Лимит для Жартас -->
                     <div class="limit-info-card">
                         <div class="limit-info-header">
-                            <h3 class="limit-info-title">Лимит на путевки</h3>
+                            <h3 class="limit-info-title">Лимит на путевки - Жартас</h3>
                             <span class="limit-period">
-                                Период: с {{ vacation_limit.period_start|date:"d.m.Y" }} по 
-                                {% if vacation_limit.period_start.month == 12 %}
-                                    17.01.{{ vacation_limit.period_start.year|add:"1" }}
+                                Период: с {{ zhartas_limit.period_start|date:"d.m.Y" }} по 
+                                {% if zhartas_limit.period_start.month == 12 %}
+                                    17.01.{{ zhartas_limit.period_start.year|add:"1" }}
                                 {% else %}
-                                    17.{{ vacation_limit.period_start.month|add:"1" }}.{{ vacation_limit.period_start.year }}
+                                    17.{{ zhartas_limit.period_start.month|add:"1" }}.{{ zhartas_limit.period_start.year }}
                                 {% endif %}
                             </span>
                         </div>
@@ -50,22 +52,23 @@
                             <div class="limit-stats">
                                 <div class="limit-stat-item">
                                     <span class="limit-stat-label">Установленный лимит:</span>
-                                    <span class="limit-stat-value">{{ vacation_limit.limit }} мест</span>
+                                    <span class="limit-stat-value">{{ zhartas_limit.limit }} мест</span>
                                 </div>
                                 <div class="limit-stat-item">
                                     <span class="limit-stat-label">Использовано:</span>
-                                    <span class="limit-stat-value">{{ used_places }} мест</span>
+                                    <span class="limit-stat-value">{{ zhartas_used_places }} мест</span>
                                 </div>
                                 <div class="limit-stat-item">
                                     <span class="limit-stat-label">Осталось:</span>
-                                    <span class="limit-stat-value {% if remaining_places == 0 %}limit-stat-value-warning{% endif %}">{{ remaining_places }} мест</span>
+                                    <span class="limit-stat-value {% if zhartas_remaining_places == 0 %}limit-stat-value-warning{% endif %}">{{ zhartas_remaining_places }} мест</span>
                                 </div>
                             </div>
                             <form method="post" action="{% url 'main:set_vacation_limit' %}" class="limit-form">
                                 {% csrf_token %}
+                                <input type="hidden" name="resort" value="zhartas">
                                 <div class="limit-form-group">
                                     <label class="limit-form-label">
-                                        {% if vacation_limit.limit == 0 %}
+                                        {% if zhartas_limit.limit == 0 %}
                                             Установить лимит:
                                         {% else %}
                                             Увеличить лимит до:
@@ -76,25 +79,90 @@
                                             type="number" 
                                             name="limit" 
                                             class="limit-form-input" 
-                                            min="{% if vacation_limit.limit == 0 %}0{% else %}{{ vacation_limit.limit|add:"1" }}{% endif %}"
-                                            value="{% if vacation_limit.limit == 0 %}0{% else %}{{ vacation_limit.limit|add:"1" }}{% endif %}"
+                                            min="{% if zhartas_limit.limit == 0 %}0{% else %}{{ zhartas_limit.limit|add:"1" }}{% endif %}"
+                                            value="{% if zhartas_limit.limit == 0 %}0{% else %}{{ zhartas_limit.limit|add:"1" }}{% endif %}"
                                             required
                                         >
                                         <button type="submit" class="btn btn-primary btn-sm">
-                                            {% if vacation_limit.limit == 0 %}
+                                            {% if zhartas_limit.limit == 0 %}
                                                 Установить
                                             {% else %}
                                                 Увеличить
                                             {% endif %}
                                         </button>
                                     </div>
-                                    {% if vacation_limit.limit > 0 %}
-                                    <p class="limit-form-hint">Можно только увеличить лимит. Текущий: {{ vacation_limit.limit }}</p>
+                                    {% if zhartas_limit.limit > 0 %}
+                                    <p class="limit-form-hint">Можно только увеличить лимит. Текущий: {{ zhartas_limit.limit }}</p>
                                     {% endif %}
                                 </div>
                             </form>
                         </div>
                     </div>
+                    
+                    <!-- Лимит для Шахтер -->
+                    <div class="limit-info-card">
+                        <div class="limit-info-header">
+                            <h3 class="limit-info-title">Лимит на путевки - Шахтер</h3>
+                            <span class="limit-period">
+                                Период: с {{ shakhter_limit.period_start|date:"d.m.Y" }} по 
+                                {% if shakhter_limit.period_start.month == 12 %}
+                                    17.01.{{ shakhter_limit.period_start.year|add:"1" }}
+                                {% else %}
+                                    17.{{ shakhter_limit.period_start.month|add:"1" }}.{{ shakhter_limit.period_start.year }}
+                                {% endif %}
+                            </span>
+                        </div>
+                        <div class="limit-info-body">
+                            <div class="limit-stats">
+                                <div class="limit-stat-item">
+                                    <span class="limit-stat-label">Установленный лимит:</span>
+                                    <span class="limit-stat-value">{{ shakhter_limit.limit }} мест</span>
+                                </div>
+                                <div class="limit-stat-item">
+                                    <span class="limit-stat-label">Использовано:</span>
+                                    <span class="limit-stat-value">{{ shakhter_used_places }} мест</span>
+                                </div>
+                                <div class="limit-stat-item">
+                                    <span class="limit-stat-label">Осталось:</span>
+                                    <span class="limit-stat-value {% if shakhter_remaining_places == 0 %}limit-stat-value-warning{% endif %}">{{ shakhter_remaining_places }} мест</span>
+                                </div>
+                            </div>
+                            <form method="post" action="{% url 'main:set_vacation_limit' %}" class="limit-form">
+                                {% csrf_token %}
+                                <input type="hidden" name="resort" value="shakhter">
+                                <div class="limit-form-group">
+                                    <label class="limit-form-label">
+                                        {% if shakhter_limit.limit == 0 %}
+                                            Установить лимит:
+                                        {% else %}
+                                            Увеличить лимит до:
+                                        {% endif %}
+                                    </label>
+                                    <div class="limit-form-input-group">
+                                        <input 
+                                            type="number" 
+                                            name="limit" 
+                                            class="limit-form-input" 
+                                            min="{% if shakhter_limit.limit == 0 %}0{% else %}{{ shakhter_limit.limit|add:"1" }}{% endif %}"
+                                            value="{% if shakhter_limit.limit == 0 %}0{% else %}{{ shakhter_limit.limit|add:"1" }}{% endif %}"
+                                            required
+                                        >
+                                        <button type="submit" class="btn btn-primary btn-sm">
+                                            {% if shakhter_limit.limit == 0 %}
+                                                Установить
+                                            {% else %}
+                                                Увеличить
+                                            {% endif %}
+                                        </button>
+                                    </div>
+                                    {% if shakhter_limit.limit > 0 %}
+                                    <p class="limit-form-hint">Можно только увеличить лимит. Текущий: {{ shakhter_limit.limit }}</p>
+                                    {% endif %}
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                    {% endif %}
                     
                     <div class="application-cards">
                         <div class="application-card" onclick="toggleVacationForm()">
@@ -130,7 +198,7 @@
                     <!-- Форма заявления на путевку -->
                     <div class="vacation-form-container" id="vacation-form-container" style="display: none;">
                         <h3 class="form-section-title">Заявление на путевку</h3>
-                        <form method="post" action="{% url 'main:create_vacation_request' %}" class="vacation-form" id="vacation-form" onsubmit="return validateVacationForm()">
+                        <form method="post" action="{% url 'main:create_vacation_request' %}" class="vacation-form" id="vacation-form" enctype="multipart/form-data" onsubmit="return validateVacationForm()">
                             {% csrf_token %}
                             
                             <div class="form-section">
@@ -205,6 +273,15 @@
                                             <div class="price-calculation-hint">Выберите курорт, даты и работника для расчета</div>
                                         </div>
                                     </div>
+                                </div>
+                            </div>
+                            
+                            <div class="form-section" id="study-certificate-section" style="display: none;">
+                                <h4 class="form-subtitle">Справка об очном обучении</h4>
+                                <div class="form-group">
+                                    <label class="form-label">Файл справки об очном обучении *</label>
+                                    <input type="file" name="study_certificate_file" class="form-input" id="study-certificate-file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
+                                    <div class="form-hint">Обязательно для детей/внуков старше 18 лет</div>
                                 </div>
                             </div>
                             
@@ -967,7 +1044,7 @@
                                 <h4 class="form-subtitle">Удостоверение личности</h4>
                                 <div class="form-grid">
                                     <div class="form-group">
-                                        <label class="form-label">{{ worker_form.id_number.label }}</label>
+                                        <label class="form-label">{{ worker_form.id_number.label }} *</label>
                                         {{ worker_form.id_number }}
                                         {{ worker_form.id_number.errors }}
                                     </div>
@@ -1036,6 +1113,7 @@
                                                     <option value="child">Ребенок</option>
                                                     <option value="parent">Родитель</option>
                                                     <option value="sibling">Брат/Сестра</option>
+                                                    <option value="grandchild">Внук/Внучка</option>
                                                     <option value="other">Другое</option>
                                                 </select>
                                             </div>
@@ -1050,6 +1128,11 @@
                                             <div class="form-group">
                                                 <label class="form-label">Кем выдано удо</label>
                                                 <input type="text" name="family_0_id_issued_by" class="form-input" placeholder="Кем выдано">
+                                            </div>
+                                            <div class="form-group">
+                                                <label class="form-label">Дата рождения</label>
+                                                <input type="date" name="family_0_birth_date" class="form-input">
+                                                <div class="form-hint">Обязательно для детей и внуков/внучек</div>
                                             </div>
                                         </div>
                                     </div>
@@ -1308,31 +1391,37 @@
         activateTab(activeTab);
 
         // Если пришли с параметром авто-загрузки, сразу запускаем скачивание файла
-        if (activeTab === 'reports' && autoDownload && autoDownloadRequestId) {
-            let downloadUrl = null;
-            if (autoDownload === 'vacation') {
-                downloadUrl = `/vacation-request/${autoDownloadRequestId}/download/`;
-            } else if (autoDownload === 'coal') {
-                downloadUrl = `/coal-request/${autoDownloadRequestId}/download/`;
-            } else if (autoDownload === 'funeral') {
-                downloadUrl = `/funeral-request/${autoDownloadRequestId}/download/`;
-            }
+        if (autoDownload && autoDownloadRequestId) {
+            // Небольшая задержка, чтобы вкладка успела активироваться
+            setTimeout(function() {
+                // Убеждаемся, что вкладка reports активна
+                if (activeTab === 'reports' || urlParams.get('tab') === 'reports') {
+                    let downloadUrl = null;
+                    if (autoDownload === 'vacation') {
+                        downloadUrl = `/vacation-request/${autoDownloadRequestId}/download/`;
+                    } else if (autoDownload === 'coal') {
+                        downloadUrl = `/coal-request/${autoDownloadRequestId}/download/`;
+                    } else if (autoDownload === 'funeral') {
+                        downloadUrl = `/funeral-request/${autoDownloadRequestId}/download/`;
+                    }
 
-            if (downloadUrl) {
-                const link = document.createElement('a');
-                link.href = downloadUrl;
-                link.download = '';
-                link.style.display = 'none';
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
+                    if (downloadUrl) {
+                        const link = document.createElement('a');
+                        link.href = downloadUrl;
+                        link.download = '';
+                        link.style.display = 'none';
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
 
-                // Очищаем параметры авто-загрузки в адресной строке, чтобы не повторять скачивание
-                const cleanUrl = new URL(window.location);
-                cleanUrl.searchParams.delete('auto_download');
-                cleanUrl.searchParams.delete('request_id');
-                window.history.replaceState({}, '', cleanUrl);
-            }
+                        // Очищаем параметры авто-загрузки в адресной строке, чтобы не повторять скачивание
+                        const cleanUrl = new URL(window.location);
+                        cleanUrl.searchParams.delete('auto_download');
+                        cleanUrl.searchParams.delete('request_id');
+                        window.history.replaceState({}, '', cleanUrl);
+                    }
+                }
+            }, 300);
         }
         
         tabButtons.forEach(button => {
@@ -1378,6 +1467,49 @@
                     pensionerFieldsCreate.style.display = 'none';
                 }
             }
+            // Обновляем опции степени родства
+            updateRelationshipOptions();
+        }
+        
+        // Функция для обновления опций степени родства в зависимости от статуса работника
+        function updateRelationshipOptions() {
+            const isPensioner = statusSelectCreate && statusSelectCreate.value === 'pensioner';
+            const relationshipSelects = document.querySelectorAll('select[name^="family_"][name$="_relationship"]');
+            
+            relationshipSelects.forEach(select => {
+                const currentValue = select.value;
+                // Очищаем select
+                select.innerHTML = '<option value="">Выберите</option>';
+                
+                // Добавляем стандартные опции
+                const options = [
+                    {value: 'spouse', text: 'Супруг(а)'},
+                    {value: 'child', text: 'Ребенок'},
+                    {value: 'parent', text: 'Родитель'},
+                    {value: 'sibling', text: 'Брат/Сестра'},
+                ];
+                
+                // Если пенсионер, добавляем опцию "Внук/Внучка"
+                if (isPensioner) {
+                    options.push({value: 'grandchild', text: 'Внук/Внучка'});
+                }
+                
+                // Добавляем опцию "Другое" в конце
+                options.push({value: 'other', text: 'Другое'});
+                
+                // Создаем опции
+                options.forEach(opt => {
+                    const option = document.createElement('option');
+                    option.value = opt.value;
+                    option.textContent = opt.text;
+                    select.appendChild(option);
+                });
+                
+                // Восстанавливаем выбранное значение, если оно все еще доступно
+                if (currentValue && Array.from(select.options).some(opt => opt.value === currentValue)) {
+                    select.value = currentValue;
+                }
+            });
         }
         
         function toggleBenefitsFieldsCreate() {
@@ -1405,6 +1537,8 @@
         if (statusSelectCreate) {
             statusSelectCreate.addEventListener('change', togglePensionerFieldsCreate);
             togglePensionerFieldsCreate(); // Вызываем при загрузке
+            // Обновляем опции степени родства при загрузке
+            updateRelationshipOptions();
         }
         
         if (hasBenefitsSelectCreate) {
@@ -1670,6 +1804,7 @@
                                 <option value="child">Ребенок</option>
                                 <option value="parent">Родитель</option>
                                 <option value="sibling">Брат/Сестра</option>
+                                ${statusSelectCreate && statusSelectCreate.value === 'pensioner' ? '<option value="grandchild">Внук/Внучка</option>' : ''}
                                 <option value="other">Другое</option>
                             </select>
                         </div>
@@ -1685,11 +1820,18 @@
                             <label class="form-label">Кем выдано удо</label>
                             <input type="text" name="family_${familyIndex}_id_issued_by" class="form-input" placeholder="Кем выдано">
                         </div>
+                        <div class="form-group">
+                            <label class="form-label">Дата рождения</label>
+                            <input type="date" name="family_${familyIndex}_birth_date" class="form-input">
+                            <div class="form-hint">Обязательно для детей и внуков/внучек</div>
+                        </div>
                     </div>
                 `;
                 familyContainer.appendChild(newMember);
                 familyIndex++;
                 familyCountInput.value = familyIndex;
+                // Обновляем опции степени родства для нового члена семьи
+                updateRelationshipOptions();
             });
         }
     });
@@ -2015,6 +2157,23 @@
         if (materialAssistanceContainer) materialAssistanceContainer.style.display = 'none';
         if (coalContainer) coalContainer.style.display = 'none';
         container.style.display = container.style.display === 'none' ? 'block' : 'none';
+        
+        // При открытии формы восстанавливаем все опции курортов
+        if (container.style.display === 'block') {
+            const resortSelect = document.querySelector('select[name="resort"]');
+            if (resortSelect) {
+                const balkhashOption = resortSelect.querySelector('option[value="balkhash"]');
+                const discoveryOption = resortSelect.querySelector('option[value="discovery"]');
+                if (balkhashOption) {
+                    balkhashOption.style.display = '';
+                    balkhashOption.disabled = false;
+                }
+                if (discoveryOption) {
+                    discoveryOption.style.display = '';
+                    discoveryOption.disabled = false;
+                }
+            }
+        }
         if (container.style.display === 'block') {
             container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         } else {
@@ -2022,6 +2181,21 @@
             document.getElementById('vacation-form').reset();
             document.getElementById('selected-worker-info').style.display = 'none';
             document.getElementById('worker-autocomplete').innerHTML = '';
+            
+            // Восстанавливаем все опции курортов при сбросе формы
+            const resortSelect = document.querySelector('select[name="resort"]');
+            if (resortSelect) {
+                const balkhashOption = resortSelect.querySelector('option[value="balkhash"]');
+                const discoveryOption = resortSelect.querySelector('option[value="discovery"]');
+                if (balkhashOption) {
+                    balkhashOption.style.display = '';
+                    balkhashOption.disabled = false;
+                }
+                if (discoveryOption) {
+                    discoveryOption.style.display = '';
+                    discoveryOption.disabled = false;
+                }
+            }
         }
     }
     
@@ -2206,9 +2380,10 @@
                                 const department = worker.department.replace(/'/g, "\\'");
                                 const position = worker.position.replace(/'/g, "\\'");
                                 const statusDisplay = (worker.status_display || '').replace(/'/g, "\\'");
+                                const status = (worker.status || '').replace(/'/g, "\\'");
                                 const isDead = worker.is_dead || false;
                                 return `
-                                    <div class="autocomplete-item" onclick="selectWorker(${worker.id}, '${fullName}', '${personnelNumber}', '${department}', '${position}', '${statusDisplay}', ${isDead})">
+                                    <div class="autocomplete-item" onclick="selectWorker(${worker.id}, '${fullName}', '${personnelNumber}', '${department}', '${position}', '${statusDisplay}', ${isDead}, '${status}')">
                                         <strong>${worker.full_name}</strong><br>
                                         <small>${worker.personnel_number} - ${worker.department}${isDead ? ' ⚠️ УМЕР' : ''}</small>
                                     </div>
@@ -2231,7 +2406,7 @@
         });
     }
     
-    function selectWorker(workerId, fullName, personnelNumber, department, position, statusDisplay, isDead = false) {
+    function selectWorker(workerId, fullName, personnelNumber, department, position, statusDisplay, isDead = false, status = '') {
         document.getElementById('selected-worker-id').value = workerId;
         document.getElementById('worker-full-name').textContent = fullName;
         document.getElementById('worker-personnel-number').textContent = personnelNumber;
@@ -2247,6 +2422,40 @@
         document.getElementById('selected-worker-info').style.display = 'block';
         workerSearchInput.value = fullName;
         workerAutocomplete.style.display = 'none';
+        
+        // Скрываем/показываем опции курортов для пенсионеров
+        const resortSelect = document.querySelector('select[name="resort"]');
+        if (resortSelect) {
+            const isPensioner = status === 'pensioner';
+            const balkhashOption = resortSelect.querySelector('option[value="balkhash"]');
+            const discoveryOption = resortSelect.querySelector('option[value="discovery"]');
+            
+            if (isPensioner) {
+                // Скрываем Балхаш и Дискавери для пенсионеров
+                if (balkhashOption) {
+                    balkhashOption.style.display = 'none';
+                    balkhashOption.disabled = true;
+                }
+                if (discoveryOption) {
+                    discoveryOption.style.display = 'none';
+                    discoveryOption.disabled = true;
+                }
+                // Если выбран запрещенный курорт, сбрасываем выбор
+                if (resortSelect.value === 'balkhash' || resortSelect.value === 'discovery') {
+                    resortSelect.value = '';
+                }
+            } else {
+                // Показываем все курорты для не-пенсионеров
+                if (balkhashOption) {
+                    balkhashOption.style.display = '';
+                    balkhashOption.disabled = false;
+                }
+                if (discoveryOption) {
+                    discoveryOption.style.display = '';
+                    discoveryOption.disabled = false;
+                }
+            }
+        }
         
         // Показываем предупреждение, если пенсионер мертв
         const warningElement = document.getElementById('worker-death-warning');
@@ -2272,6 +2481,40 @@
                     document.getElementById('worker-status').textContent = data.status;
                 } else if (!data.status && (!statusDisplay || statusDisplay.trim() === '')) {
                     document.getElementById('worker-status').textContent = '—';
+                }
+                
+                // Обновляем опции курортов на основе статуса из API
+                const resortSelect = document.querySelector('select[name="resort"]');
+                if (resortSelect) {
+                    const isPensioner = (data.status_code === 'pensioner') || (data.status && data.status.toLowerCase().includes('пенсионер'));
+                    const balkhashOption = resortSelect.querySelector('option[value="balkhash"]');
+                    const discoveryOption = resortSelect.querySelector('option[value="discovery"]');
+                    
+                    if (isPensioner) {
+                        // Скрываем Балхаш и Дискавери для пенсионеров
+                        if (balkhashOption) {
+                            balkhashOption.style.display = 'none';
+                            balkhashOption.disabled = true;
+                        }
+                        if (discoveryOption) {
+                            discoveryOption.style.display = 'none';
+                            discoveryOption.disabled = true;
+                        }
+                        // Если выбран запрещенный курорт, сбрасываем выбор
+                        if (resortSelect.value === 'balkhash' || resortSelect.value === 'discovery') {
+                            resortSelect.value = '';
+                        }
+                    } else {
+                        // Показываем все курорты для не-пенсионеров
+                        if (balkhashOption) {
+                            balkhashOption.style.display = '';
+                            balkhashOption.disabled = false;
+                        }
+                        if (discoveryOption) {
+                            discoveryOption.style.display = '';
+                            discoveryOption.disabled = false;
+                        }
+                    }
                 }
                 
                 // Проверяем статус смерти из API и показываем предупреждение
@@ -2324,13 +2567,81 @@
                         `;
                     }).join('');
                     familySelection.style.display = 'block';
+                    
+                    // Сохраняем данные членов семьи для проверки возраста
+                    window.familyMembersData = data.family_members;
+                    
+                    // Добавляем обработчики для проверки возраста
+                    setupAgeValidation();
                 } else {
                     familySelection.style.display = 'none';
+                    window.familyMembersData = [];
                 }
                 
                 // Пересчитываем цену после выбора работника
                 calculatePrice();
             });
+    }
+    
+    // Функция для настройки проверки возраста
+    function setupAgeValidation() {
+        const familyCheckboxes = document.querySelectorAll('input[name="family_members"]');
+        const resortSelect = document.querySelector('select[name="resort"]');
+        const studyCertSection = document.getElementById('study-certificate-section');
+        const studyCertFile = document.getElementById('study-certificate-file');
+        
+        function checkAgeRequirements() {
+            if (!window.familyMembersData) return;
+            
+            const selectedFamilyIds = Array.from(document.querySelectorAll('input[name="family_members"]:checked')).map(cb => parseInt(cb.value));
+            const resort = resortSelect ? resortSelect.value : '';
+            let needsCertificate = false;
+            let hasOrlenokAgeIssue = false;
+            
+            selectedFamilyIds.forEach(familyId => {
+                const member = window.familyMembersData.find(m => m.id === familyId);
+                if (!member) return;
+                
+                // Проверяем только детей и внуков/внучек
+                if (member.relationship_code !== 'child' && member.relationship_code !== 'grandchild') return;
+                
+                if (!member.birth_date || member.age === null) {
+                    // Если нет даты рождения, не можем проверить
+                    return;
+                }
+                
+                // Для ДОЦ "Орленок" - проверка на 14 лет
+                if (resort === 'orlenok' && member.age >= 14) {
+                    hasOrlenokAgeIssue = true;
+                }
+                
+                // Для остальных курортов - проверка на 18 лет
+                if (resort !== 'orlenok' && member.age >= 18) {
+                    needsCertificate = true;
+                }
+            });
+            
+            // Показываем/скрываем поле справки
+            if (needsCertificate) {
+                studyCertSection.style.display = 'block';
+                studyCertFile.required = true;
+            } else {
+                studyCertSection.style.display = 'none';
+                studyCertFile.required = false;
+            }
+        }
+        
+        // Добавляем обработчики
+        familyCheckboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', checkAgeRequirements);
+        });
+        
+        if (resortSelect) {
+            resortSelect.addEventListener('change', checkAgeRequirements);
+        }
+        
+        // Проверяем при загрузке
+        checkAgeRequirements();
     }
     
     // Material Assistance Worker Search
@@ -2493,6 +2804,41 @@
         
         if (workerError) {
             workerError.style.display = 'none';
+        }
+        
+        // Проверка возраста детей/внуков
+        const resortSelect = document.querySelector('select[name="resort"]');
+        const resort = resortSelect ? resortSelect.value : '';
+        const selectedFamilyIds = Array.from(document.querySelectorAll('input[name="family_members"]:checked')).map(cb => parseInt(cb.value));
+        const studyCertFile = document.getElementById('study-certificate-file');
+        
+        if (window.familyMembersData && selectedFamilyIds.length > 0) {
+            selectedFamilyIds.forEach(familyId => {
+                const member = window.familyMembersData.find(m => m.id === familyId);
+                if (!member) return;
+                
+                // Проверяем только детей и внуков/внучек
+                if (member.relationship_code !== 'child' && member.relationship_code !== 'grandchild') return;
+                
+                if (!member.birth_date || member.age === null) {
+                    showError(`Для ${member.relationship.toLowerCase()} ${member.full_name} необходимо указать дату рождения!`);
+                    return false;
+                }
+                
+                // Для ДОЦ "Орленок" - проверка на 14 лет
+                if (resort === 'orlenok' && member.age >= 14) {
+                    showError(`${member.relationship} ${member.full_name} не проходит по возрасту для ДОЦ "Орленок" (возраст ${member.age} лет, требуется до 14 лет).`);
+                    return false;
+                }
+                
+                // Для остальных курортов - проверка на 18 лет и обязательный файл
+                if (resort !== 'orlenok' && member.age >= 18) {
+                    if (!studyCertFile || !studyCertFile.files || studyCertFile.files.length === 0) {
+                        showError(`Для ${member.relationship.toLowerCase()} ${member.full_name} старше 18 лет (возраст ${member.age} лет) необходимо прикрепить справку об очном обучении!`);
+                        return false;
+                    }
+                }
+            });
         }
         
         return true;

@@ -94,5 +94,31 @@ document.addEventListener('DOMContentLoaded', function() {
         updateDateTime();
         setInterval(updateDateTime, 1000);
     }
+    
+    // Password toggle functionality
+    const passwordToggle = document.getElementById('password-toggle');
+    if (passwordToggle) {
+        // Ищем input внутри контейнера пароля - берем первый input
+        const passwordWrapper = passwordToggle.parentElement;
+        const passwordInput = passwordWrapper.querySelector('input');
+        
+        if (passwordInput) {
+            passwordToggle.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                // Переключаем тип поля
+                if (passwordInput.type === 'password') {
+                    passwordInput.type = 'text';
+                    passwordToggle.classList.add('active');
+                    passwordToggle.setAttribute('aria-label', 'Скрыть пароль');
+                } else {
+                    passwordInput.type = 'password';
+                    passwordToggle.classList.remove('active');
+                    passwordToggle.setAttribute('aria-label', 'Показать пароль');
+                }
+            });
+        }
+    }
 });
 

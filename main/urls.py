@@ -16,6 +16,7 @@ urlpatterns = [
     path('vacation-request/<int:request_id>/', views.vacation_request_detail, name='vacation_request_detail'),
     path('vacation-request/<int:request_id>/update/', views.update_vacation_request, name='update_vacation_request'),
     path('vacation-request/<int:request_id>/download/', views.download_vacation_request, name='download_vacation_request'),
+    path('vacation-request/<int:request_id>/study-certificate/', views.download_study_certificate, name='download_study_certificate'),
     path('vacation-limit/set/', views.set_vacation_limit, name='set_vacation_limit'),
     path('statement/zhartas/excel/', views.generate_zhartas_statement_excel, name='generate_zhartas_statement_excel'),
     path('statement/shakhter/excel/', views.generate_shakhter_statement_excel, name='generate_shakhter_statement_excel'),

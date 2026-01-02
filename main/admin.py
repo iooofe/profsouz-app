@@ -57,8 +57,8 @@ class VacationRequestAdmin(admin.ModelAdmin):
 
 @admin.register(VacationLimit)
 class VacationLimitAdmin(admin.ModelAdmin):
-    list_display = ['user', 'period_start', 'limit', 'is_initial', 'created_at']
-    list_filter = ['period_start', 'is_initial', 'user']
+    list_display = ['user', 'resort', 'period_start', 'limit', 'is_initial', 'created_at']
+    list_filter = ['resort', 'period_start', 'is_initial', 'user']
     search_fields = ['user__username']
     readonly_fields = ['created_at', 'updated_at']
 

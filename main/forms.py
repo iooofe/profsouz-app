@@ -30,7 +30,7 @@ class LoginForm(forms.Form):
 class FamilyMemberForm(forms.ModelForm):
     class Meta:
         model = FamilyMember
-        fields = ['full_name', 'relationship', 'id_number', 'id_issue_date', 'id_issued_by']
+        fields = ['full_name', 'relationship', 'id_number', 'id_issue_date', 'id_issued_by', 'birth_date']
         widgets = {
             'full_name': forms.TextInput(attrs={
                 'class': 'form-input',
@@ -50,6 +50,10 @@ class FamilyMemberForm(forms.ModelForm):
             'id_issued_by': forms.TextInput(attrs={
                 'class': 'form-input',
                 'placeholder': 'Кем выдано',
+            }),
+            'birth_date': forms.DateInput(attrs={
+                'class': 'form-input',
+                'type': 'date',
             }),
             'has_benefits': forms.Select(attrs={
                 'class': 'form-input',
@@ -119,6 +123,7 @@ class WorkerForm(forms.ModelForm):
             'id_number': forms.TextInput(attrs={
                 'class': 'form-input',
                 'placeholder': 'Номер удостоверения',
+                'required': True,
             }),
             'id_issue_date': forms.DateInput(attrs={
                 'class': 'form-input',
