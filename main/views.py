@@ -654,6 +654,23 @@ def create_vacation_request(request):
             messages.error(request, 'Не указаны даты поездки!')
             return redirect(f"{reverse('main:index')}?tab=applications")
         
+        # Получаем и валидируем сезоны для ДОЦ "Орленок"
+        seasons = []
+        if resort == 'orlenok':
+            seasons = request.POST.getlist('seasons')
+            if not seasons:
+                messages.error(request, 'Для ДОЦ "Орленок" необходимо выбрать хотя бы один сезон!')
+                return redirect(f"{reverse('main:index')}?tab=applications")
+            # Преобразуем в список чисел и валидируем
+            try:
+                seasons = [int(s) for s in seasons if s.isdigit()]
+                if not seasons or not all(1 <= s <= 4 for s in seasons):
+                    messages.error(request, 'Сезоны должны быть числами от 1 до 4!')
+                    return redirect(f"{reverse('main:index')}?tab=applications")
+            except (ValueError, TypeError):
+                messages.error(request, 'Неверный формат сезонов!')
+                return redirect(f"{reverse('main:index')}?tab=applications")
+        
         # Преобразуем строки в объекты date
         try:
             from datetime import datetime
@@ -736,7 +753,8 @@ def create_vacation_request(request):
                 resort=resort,
                 start_date=start_date,
                 end_date=end_date,
-                study_certificate_file=study_certificate_file
+                study_certificate_file=study_certificate_file,
+                seasons=seasons
             )
             
             # Добавляем выбранных членов семьи
@@ -878,6 +896,13 @@ def generate_vacation_request_preview(vacation):
     if vacation.family_members.exists():
         family_names = ', '.join([fm.full_name for fm in vacation.family_members.all()])
     
+    # Формируем текст просьбы с учетом сезонов для ДОЦ "Орленок"
+    seasons_display = vacation.get_seasons_display()
+    if vacation.resort == 'orlenok' and seasons_display:
+        request_text = f'Прошу выделить {people_count} путевку(ки) в {resort_name} на {seasons_display}'
+    else:
+        request_text = f'Прошу выделить {people_count} путевку(ки) в {resort_name}'
+    
     # Для Жартас и Шахтер - полный шаблон, для остальных - упрощенный
     if vacation.resort in ['zhartas', 'shakhter']:
         preview = f'''
@@ -900,7 +925,7 @@ def generate_vacation_request_preview(vacation):
             <strong>ЗАЯВЛЕНИЕ</strong>
         </div>
         <div class="preview-body">
-            <div>Прошу выделить {people_count} путевку(ки) в {resort_name}</div>
+            <div>{request_text}</div>
             <div>Сроком {days} дней с {start_date_str} года.</div>
                 <div>Отпуск с «______» ______ 201__ г..</div>
             {f'<div>{family_names} (членам семьи)</div>' if family_names else ''}
@@ -942,7 +967,7 @@ def generate_vacation_request_preview(vacation):
                 <strong>ЗАЯВЛЕНИЕ</strong>
             </div>
             <div class="preview-body">
-                <div>Прошу выделить {people_count} путевку(ки) в {resort_name}</div>
+                <div>{request_text}</div>
                 <div>Сроком {days} дней с {start_date_str} года.</div>
                 <div>Отпуск с «______» ______ 201__ г..</div>
                 {f'<div>({id_info})</div>' if id_info else ''}
@@ -1013,9 +1038,16 @@ def generate_vacation_request_docx(vacation):
     start_date_str = vacation.start_date.strftime('%d.%m.%Y')
     price_str = f"{int(vacation.price)}" if vacation.price else "—"
     
+    # Формируем текст просьбы с учетом сезонов для ДОЦ "Орленок"
+    seasons_display = vacation.get_seasons_display()
+    if vacation.resort == 'orlenok' and seasons_display:
+        request_text = f'Прошу выделить {people_count} путевку(ки) в {resort_name} на {seasons_display}'
+    else:
+        request_text = f'Прошу выделить {people_count} путевку(ки) в {resort_name}'
+    
     # Формируем текст заявления с сохранением структуры строк (точно как в предпросмотре)
     request_para1 = doc.add_paragraph()
-    request_para1.add_run(f'Прошу выделить {people_count} путевку(ки) в {resort_name}')
+    request_para1.add_run(request_text)
     
     request_para2 = doc.add_paragraph()
     request_para2.add_run(f'Сроком {days} дней с {start_date_str} года.')
@@ -1145,9 +1177,16 @@ def generate_vacation_request_docx_standard(vacation):
     resort_name = vacation.get_resort_display()
     start_date_str = vacation.start_date.strftime('%d.%m.%Y')
     
+    # Формируем текст просьбы с учетом сезонов для ДОЦ "Орленок"
+    seasons_display = vacation.get_seasons_display()
+    if vacation.resort == 'orlenok' and seasons_display:
+        request_text = f'Прошу выделить {people_count} путевку(ки) в {resort_name} на {seasons_display}'
+    else:
+        request_text = f'Прошу выделить {people_count} путевку(ки) в {resort_name}'
+    
     # Автоматическое заполнение: %кол-во путевок% и %курорт%
     request_para1 = doc.add_paragraph()
-    request_para1.add_run(f'Прошу выделить {people_count} путевку(ки) в {resort_name}')
+    request_para1.add_run(request_text)
     
     # Автоматическое заполнение: %кол-во дней% и %дата начала путевки%
     request_para2 = doc.add_paragraph()
@@ -1672,42 +1711,47 @@ def download_worker_file(request, worker_id, file_type):
     else:
         worker = get_object_or_404(Worker, id=worker_id, user=request.user)
     
+    file_field = None
     if file_type == 'benefits':
         if not worker.benefits_file:
             messages.error(request, 'Файл не найден')
             return redirect(f"{reverse('main:index')}?tab=workers")
-        file_path = worker.benefits_file.path
-        filename = worker.benefits_file.name.split('/')[-1]
+        file_field = worker.benefits_file
     elif file_type == 'miner_glory':
         if not worker.miner_glory_file:
             messages.error(request, 'Файл не найден')
             return redirect(f"{reverse('main:index')}?tab=workers")
-        file_path = worker.miner_glory_file.path
-        filename = worker.miner_glory_file.name.split('/')[-1]
+        file_field = worker.miner_glory_file
     elif file_type == 'house_passport':
         if not worker.house_passport_file:
             messages.error(request, 'Файл не найден')
             return redirect(f"{reverse('main:index')}?tab=workers")
-        file_path = worker.house_passport_file.path
-        filename = worker.house_passport_file.name.split('/')[-1]
+        file_field = worker.house_passport_file
     elif file_type == 'pensioner_id':
         if not worker.pensioner_id_file:
             messages.error(request, 'Файл не найден')
             return redirect(f"{reverse('main:index')}?tab=workers")
-        file_path = worker.pensioner_id_file.path
-        filename = worker.pensioner_id_file.name.split('/')[-1]
+        file_field = worker.pensioner_id_file
     elif file_type == 'death_certificate':
         if not worker.death_certificate_file:
             messages.error(request, 'Файл не найден')
             return redirect(f"{reverse('main:index')}?tab=workers")
-        file_path = worker.death_certificate_file.path
-        filename = worker.death_certificate_file.name.split('/')[-1]
+        file_field = worker.death_certificate_file
     else:
         messages.error(request, 'Неверный тип файла')
         return redirect(f"{reverse('main:index')}?tab=workers")
     
-    if os.path.exists(file_path):
-        return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=filename)
+    if file_field and file_field.name:
+        filename = file_field.name.split('/')[-1]
+        safe_filename = transliterate_filename(filename)
+        
+        response = FileResponse(
+            file_field.open('rb'),
+            content_type='application/octet-stream'
+        )
+        response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
+        
+        return response
     else:
         messages.error(request, 'Файл не найден на сервере')
         return redirect(f"{reverse('main:index')}?tab=workers")

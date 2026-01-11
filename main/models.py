@@ -163,6 +163,7 @@ class VacationRequest(models.Model):
     end_date = models.DateField('Дата окончания поездки')
     price = models.DecimalField('Цена путевки', max_digits=10, decimal_places=2, null=True, blank=True)
     is_rejected = models.BooleanField('Отказ от поездки', default=False)
+    seasons = models.JSONField('Сезоны (для ДОЦ "Орленок")', default=list, blank=True, help_text='Список сезонов: 1, 2, 3, 4')
     study_certificate_file = models.FileField('Справка об очном обучении', upload_to='vacation/study_certificates/', null=True, blank=True, help_text='Обязательно для детей/внуков старше 18 лет')
     created_at = models.DateTimeField('Дата создания', auto_now_add=True)
     updated_at = models.DateTimeField('Дата обновления', auto_now=True)
@@ -243,6 +244,27 @@ class VacationRequest(models.Model):
         people_count = self.get_places_count()
         
         return price_per_day * days * people_count
+    
+    def get_seasons_display(self):
+        """Возвращает форматированную строку сезонов для ДОЦ 'Орленок'"""
+        if self.resort != 'orlenok':
+            return None
+        
+        if not self.seasons or len(self.seasons) == 0:
+            return None
+        
+        # Сортируем сезоны
+        sorted_seasons = sorted([int(s) for s in self.seasons if str(s).isdigit()])
+        
+        if len(sorted_seasons) == 0:
+            return None
+        
+        # Форматируем: "1 сезон" или "1, 2, 3 сезоны"
+        seasons_str = ', '.join(str(s) for s in sorted_seasons)
+        if len(sorted_seasons) == 1:
+            return f"{seasons_str} сезон"
+        else:
+            return f"{seasons_str} сезоны"
 
 
 class MaterialAssistanceRequest(models.Model):

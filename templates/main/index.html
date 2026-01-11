@@ -247,7 +247,7 @@
                                     <div class="form-grid">
                                         <div class="form-group">
                                             <label class="form-label">Курорт *</label>
-                                            <select name="resort" class="form-input" required>
+                                            <select name="resort" class="form-input" id="resort-select" required>
                                                 <option value="">Выберите курорт</option>
                                                 <option value="orlenok">ДОЦ "Орленок"</option>
                                                 <option value="zhartas">Санаторий "Жартас"</option>
@@ -255,6 +255,28 @@
                                                 <option value="discovery">"Дискавери"</option>
                                                 <option value="shakhter">Дом отдыха "Шахтер"</option>
                                             </select>
+                                        </div>
+                                        <div class="form-group" id="seasons-section" style="display: none;">
+                                            <label class="form-label">Сезоны *</label>
+                                            <div class="seasons-checkboxes">
+                                                <label class="checkbox-label">
+                                                    <input type="checkbox" name="seasons" value="1">
+                                                    <span>1 сезон</span>
+                                                </label>
+                                                <label class="checkbox-label">
+                                                    <input type="checkbox" name="seasons" value="2">
+                                                    <span>2 сезон</span>
+                                                </label>
+                                                <label class="checkbox-label">
+                                                    <input type="checkbox" name="seasons" value="3">
+                                                    <span>3 сезон</span>
+                                                </label>
+                                                <label class="checkbox-label">
+                                                    <input type="checkbox" name="seasons" value="4">
+                                                    <span>4 сезон</span>
+                                                </label>
+                                            </div>
+                                            <div class="form-hint">Выберите один или несколько сезонов</div>
                                         </div>
                                         <div class="form-group">
                                             <label class="form-label">Дата начала поездки *</label>
@@ -2644,6 +2666,31 @@
         checkAgeRequirements();
     }
     
+    // Показать/скрыть поле выбора сезонов для ДОЦ "Орленок"
+    function toggleSeasonsSection() {
+        const resortSelect = document.getElementById('resort-select');
+        const seasonsSection = document.getElementById('seasons-section');
+        
+        if (resortSelect && seasonsSection) {
+            if (resortSelect.value === 'orlenok') {
+                seasonsSection.style.display = 'block';
+            } else {
+                seasonsSection.style.display = 'none';
+                // Сбрасываем выбранные сезоны при смене курорта
+                const seasonCheckboxes = seasonsSection.querySelectorAll('input[name="seasons"]');
+                seasonCheckboxes.forEach(cb => cb.checked = false);
+            }
+        }
+    }
+    
+    // Добавляем обработчик для показа/скрытия поля сезонов
+    const resortSelectForSeasons = document.getElementById('resort-select');
+    if (resortSelectForSeasons) {
+        resortSelectForSeasons.addEventListener('change', toggleSeasonsSection);
+        // Проверяем при загрузке
+        toggleSeasonsSection();
+    }
+    
     // Material Assistance Worker Search
     let materialAssistanceSearchTimeout;
     const materialAssistanceWorkerSearchInput = document.getElementById('material-assistance-worker-search-input');
@@ -2809,6 +2856,16 @@
         // Проверка возраста детей/внуков
         const resortSelect = document.querySelector('select[name="resort"]');
         const resort = resortSelect ? resortSelect.value : '';
+        
+        // Проверка выбора сезонов для ДОЦ "Орленок"
+        if (resort === 'orlenok') {
+            const selectedSeasons = Array.from(document.querySelectorAll('input[name="seasons"]:checked')).map(cb => cb.value);
+            if (selectedSeasons.length === 0) {
+                showError('Необходимо выбрать хотя бы один сезон для ДОЦ "Орленок"!');
+                return false;
+            }
+        }
+        
         const selectedFamilyIds = Array.from(document.querySelectorAll('input[name="family_members"]:checked')).map(cb => parseInt(cb.value));
         const studyCertFile = document.getElementById('study-certificate-file');
         

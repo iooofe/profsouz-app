@@ -2538,6 +2538,19 @@ select:focus {
     font-style: italic;
 }
 
+/* Seasons Selection */
+.seasons-checkboxes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+    margin-top: var(--spacing-xs);
+}
+
+.seasons-checkboxes .checkbox-label {
+    flex: 0 0 auto;
+    padding: var(--spacing-sm) var(--spacing-md);
+}
+
 /* Family Members Info */
 .family-members-info-card {
     background: var(--bg-secondary);
