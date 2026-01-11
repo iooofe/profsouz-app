@@ -408,20 +408,20 @@ def worker_detail(request, worker_id):
         'id_issue_date': worker.id_issue_date.strftime('%d.%m.%Y') if worker.id_issue_date else '—',
         'id_issued_by': worker.id_issued_by or '—',
         'has_benefits': 'Да' if worker.has_benefits else 'Нет',
-        'benefits_file': worker.benefits_file.url if worker.benefits_file else None,
+        'benefits_file': reverse('main:download_worker_file', args=[worker.id, 'benefits']) if worker.benefits_file else None,
         'benefits_file_name': worker.benefits_file.name.split('/')[-1] if worker.benefits_file else None,
         'benefits_name': worker.benefits_name or '—',
         'has_miner_glory': 'Да' if worker.has_miner_glory else 'Нет',
-        'miner_glory_file': worker.miner_glory_file.url if worker.miner_glory_file else None,
+        'miner_glory_file': reverse('main:download_worker_file', args=[worker.id, 'miner_glory']) if worker.miner_glory_file else None,
         'miner_glory_file_name': worker.miner_glory_file.name.split('/')[-1] if worker.miner_glory_file else None,
-        'house_passport_file': worker.house_passport_file.url if worker.house_passport_file else None,
+        'house_passport_file': reverse('main:download_worker_file', args=[worker.id, 'house_passport']) if worker.house_passport_file else None,
         'house_passport_file_name': worker.house_passport_file.name.split('/')[-1] if worker.house_passport_file else None,
-        'pensioner_id_file': worker.pensioner_id_file.url if worker.pensioner_id_file else None,
+        'pensioner_id_file': reverse('main:download_worker_file', args=[worker.id, 'pensioner_id']) if worker.pensioner_id_file else None,
         'pensioner_id_file_name': worker.pensioner_id_file.name.split('/')[-1] if worker.pensioner_id_file else None,
         'account_20_digit': worker.account_20_digit or '—',
         'current_account': worker.current_account or '—',
         'is_dead': 'Да' if worker.is_dead else 'Нет',
-        'death_certificate_file': worker.death_certificate_file.url if worker.death_certificate_file else None,
+        'death_certificate_file': reverse('main:download_worker_file', args=[worker.id, 'death_certificate']) if worker.death_certificate_file else None,
         'death_certificate_file_name': worker.death_certificate_file.name.split('/')[-1] if worker.death_certificate_file else None,
         'family_members': [
             {
@@ -1742,16 +1742,29 @@ def download_worker_file(request, worker_id, file_type):
         return redirect(f"{reverse('main:index')}?tab=workers")
     
     if file_field and file_field.name:
+        # Проверяем существование файла
+        try:
+            file_path = file_field.path
+            if not os.path.exists(file_path):
+                messages.error(request, 'Файл не найден на сервере')
+                return redirect(f"{reverse('main:index')}?tab=workers")
+        except (ValueError, AttributeError):
+            # Если path недоступен, пробуем открыть напрямую
+            pass
+        
         filename = file_field.name.split('/')[-1]
         safe_filename = transliterate_filename(filename)
         
-        response = FileResponse(
-            file_field.open('rb'),
-            content_type='application/octet-stream'
-        )
-        response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
-        
-        return response
+        try:
+            response = FileResponse(
+                file_field.open('rb'),
+                content_type='application/octet-stream'
+            )
+            response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
+            return response
+        except (FileNotFoundError, IOError, OSError) as e:
+            messages.error(request, f'Ошибка при открытии файла: {str(e)}')
+            return redirect(f"{reverse('main:index')}?tab=workers")
     else:
         messages.error(request, 'Файл не найден на сервере')
         return redirect(f"{reverse('main:index')}?tab=workers")
