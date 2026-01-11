@@ -1714,59 +1714,81 @@ def download_worker_file(request, worker_id, file_type):
     file_field = None
     if file_type == 'benefits':
         if not worker.benefits_file:
-            messages.error(request, 'Файл не найден')
+            messages.error(request, 'Файл не найден в базе данных')
             return redirect(f"{reverse('main:index')}?tab=workers")
         file_field = worker.benefits_file
     elif file_type == 'miner_glory':
         if not worker.miner_glory_file:
-            messages.error(request, 'Файл не найден')
+            messages.error(request, 'Файл не найден в базе данных')
             return redirect(f"{reverse('main:index')}?tab=workers")
         file_field = worker.miner_glory_file
     elif file_type == 'house_passport':
         if not worker.house_passport_file:
-            messages.error(request, 'Файл не найден')
+            messages.error(request, 'Файл не найден в базе данных')
             return redirect(f"{reverse('main:index')}?tab=workers")
         file_field = worker.house_passport_file
     elif file_type == 'pensioner_id':
         if not worker.pensioner_id_file:
-            messages.error(request, 'Файл не найден')
+            messages.error(request, 'Файл не найден в базе данных')
             return redirect(f"{reverse('main:index')}?tab=workers")
         file_field = worker.pensioner_id_file
     elif file_type == 'death_certificate':
         if not worker.death_certificate_file:
-            messages.error(request, 'Файл не найден')
+            messages.error(request, 'Файл не найден в базе данных')
             return redirect(f"{reverse('main:index')}?tab=workers")
         file_field = worker.death_certificate_file
     else:
         messages.error(request, 'Неверный тип файла')
         return redirect(f"{reverse('main:index')}?tab=workers")
     
-    if file_field and file_field.name:
-        # Проверяем существование файла
-        try:
-            file_path = file_field.path
-            if not os.path.exists(file_path):
-                messages.error(request, 'Файл не найден на сервере')
-                return redirect(f"{reverse('main:index')}?tab=workers")
-        except (ValueError, AttributeError):
-            # Если path недоступен, пробуем открыть напрямую
-            pass
-        
-        filename = file_field.name.split('/')[-1]
-        safe_filename = transliterate_filename(filename)
-        
-        try:
-            response = FileResponse(
-                file_field.open('rb'),
-                content_type='application/octet-stream'
-            )
-            response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
-            return response
-        except (FileNotFoundError, IOError, OSError) as e:
-            messages.error(request, f'Ошибка при открытии файла: {str(e)}')
-            return redirect(f"{reverse('main:index')}?tab=workers")
-    else:
+    if not file_field or not file_field.name:
         messages.error(request, 'Файл не найден на сервере')
+        return redirect(f"{reverse('main:index')}?tab=workers")
+    
+    # Проверяем существование файла
+    file_path = None
+    try:
+        file_path = file_field.path
+        if not os.path.exists(file_path):
+            print(f"DEBUG: Файл не существует по пути: {file_path}")
+            print(f"DEBUG: Имя файла в БД: {file_field.name}")
+            messages.error(request, f'Файл не найден на сервере. Путь: {file_path}')
+            return redirect(f"{reverse('main:index')}?tab=workers")
+    except (ValueError, AttributeError) as e:
+        # Если path недоступен (например, файл хранится в S3), пробуем открыть напрямую
+        print(f"DEBUG: Не удалось получить path, пробуем открыть напрямую. Ошибка: {str(e)}")
+        print(f"DEBUG: Имя файла в БД: {file_field.name}")
+    
+    filename = file_field.name.split('/')[-1]
+    safe_filename = transliterate_filename(filename)
+    
+    try:
+        # Пробуем открыть файл
+        file_handle = file_field.open('rb')
+        response = FileResponse(
+            file_handle,
+            content_type='application/octet-stream'
+        )
+        response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
+        return response
+    except FileNotFoundError as e:
+        print(f"DEBUG: FileNotFoundError: {str(e)}")
+        print(f"DEBUG: Путь файла: {file_path}")
+        print(f"DEBUG: Имя файла в БД: {file_field.name}")
+        messages.error(request, 'Файл не найден на сервере. Возможно, файл был удален или перемещен.')
+        return redirect(f"{reverse('main:index')}?tab=workers")
+    except (IOError, OSError) as e:
+        print(f"DEBUG: IOError/OSError: {str(e)}")
+        print(f"DEBUG: Путь файла: {file_path}")
+        print(f"DEBUG: Имя файла в БД: {file_field.name}")
+        messages.error(request, f'Ошибка при открытии файла: {str(e)}')
+        return redirect(f"{reverse('main:index')}?tab=workers")
+    except Exception as e:
+        print(f"DEBUG: Неожиданная ошибка: {str(e)}")
+        print(f"DEBUG: Тип ошибки: {type(e).__name__}")
+        print(f"DEBUG: Путь файла: {file_path}")
+        print(f"DEBUG: Имя файла в БД: {file_field.name}")
+        messages.error(request, f'Ошибка при загрузке файла: {str(e)}')
         return redirect(f"{reverse('main:index')}?tab=workers")
 
 
