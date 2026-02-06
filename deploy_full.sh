@@ -46,6 +46,15 @@ echo "📁 Создание директории проекта..."
 mkdir -p $PROJECT_DIR
 cd $PROJECT_DIR
 
+# Если проект уже развернут, делаем резервную копию базы перед любыми изменениями
+if [ -f "$PROJECT_DIR/db.sqlite3" ]; then
+    echo "💾 Найдена существующая база данных. Делаю резервную копию..."
+    BACKUP_DIR="$PROJECT_DIR/backups"
+    mkdir -p "$BACKUP_DIR"
+    cp "$PROJECT_DIR/db.sqlite3" "$BACKUP_DIR/db_backup_$(date +%Y%m%d_%H%M%S).sqlite3"
+    echo "✅ Бэкап сохранён в $BACKUP_DIR"
+fi
+
 if [ -d ".git" ]; then
     echo "Обновление репозитория..."
     git pull
@@ -90,15 +99,16 @@ echo "🗄️  Применение миграций базы данных..."
 source $VENV_DIR/bin/activate
 python manage.py migrate
 
-# Шаг 9: Создание пользователей и импорт работников из Excel файлов
-echo "👤 Создание пользователей и импорт работников из Excel файлов..."
+# Шаг 9: Создание пользователей/импорт работников — ТОЛЬКО по явному флагу
+# Чтобы не повредить существующую БД, по умолчанию этот шаг пропускается.
+echo "👤 Создание пользователей и импорт работников (опционально)..."
 source $VENV_DIR/bin/activate
-if [ -d "$PROJECT_DIR/работники" ] || [ -d "$PROJECT_DIR/работники " ]; then
+if [ "${PROFSOUZ_RUN_CREATE_USERS:-0}" = "1" ]; then
+    echo "⚠️  PROFSOUZ_RUN_CREATE_USERS=1 — запускаю create_users (может импортировать работников из Excel)"
     python manage.py create_users
-    echo "✅ Пользователи и работники созданы из Excel файлов"
+    echo "✅ create_users выполнена"
 else
-    echo "⚠️  Папка 'работники' не найдена, создаю только пользователей без работников"
-    python manage.py create_users
+    echo "⏭️  Пропускаю create_users. (Чтобы запустить: export PROFSOUZ_RUN_CREATE_USERS=1)"
 fi
 
 # Шаг 10: Создание необходимых директорий (до collectstatic)

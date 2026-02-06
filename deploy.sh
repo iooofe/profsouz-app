@@ -76,9 +76,14 @@ EOF
 echo "🗄️  Применение миграций..."
 python manage.py migrate
 
-# Создание пользователей и импорт работников из Excel файлов
-echo "👤 Создание пользователей и импорт работников из Excel файлов..."
-python manage.py create_users
+# Создание пользователей и импорт работников (опционально)
+echo "👤 Создание пользователей и импорт работников (опционально)..."
+if [ "${PROFSOUZ_RUN_CREATE_USERS:-0}" = "1" ]; then
+    echo "⚠️  PROFSOUZ_RUN_CREATE_USERS=1 — запускаю create_users (может импортировать работников из Excel)"
+    python manage.py create_users
+else
+    echo "⏭️  Пропускаю create_users. (Чтобы запустить: export PROFSOUZ_RUN_CREATE_USERS=1)"
+fi
 
 # Сбор статических файлов
 echo "📦 Сбор статических файлов..."
