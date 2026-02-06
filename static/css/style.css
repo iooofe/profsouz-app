@@ -2510,6 +2510,11 @@ select:focus {
     color: var(--error-color);
 }
 
+.status-inactive {
+    background: rgba(255, 59, 48, 0.1);
+    color: var(--error-color);
+}
+
 .status-active {
     background: rgba(52, 199, 89, 0.1);
     color: var(--success-color);

@@ -1,6 +1,7 @@
 from django.db import models
 from django.core.validators import RegexValidator
 from django.contrib.auth.models import User
+from django.db.models import Q
 from datetime import date
 
 
@@ -49,7 +50,7 @@ class Worker(models.Model):
     
     # Основная информация
     full_name = models.CharField('ФИО', max_length=200)
-    personnel_number = models.CharField('Табельный номер', max_length=50)
+    personnel_number = models.CharField('Табельный номер', max_length=50, null=True, blank=True)
     inn = models.CharField('ИНН', max_length=12, blank=True, validators=[validate_inn_kz])
     status = models.CharField('Статус', max_length=20, choices=STATUS_CHOICES, default='worker')
     is_union_member = models.BooleanField('Член профсоюза', choices=YES_NO_CHOICES, default=False)
@@ -99,10 +100,16 @@ class Worker(models.Model):
         verbose_name = 'Работник'
         verbose_name_plural = 'Работники'
         ordering = ['full_name']
-        unique_together = [['user', 'personnel_number']]  # Табельный номер уникален в рамках пользователя
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'personnel_number'],
+                condition=Q(personnel_number__isnull=False) & ~Q(personnel_number=''),
+                name='uniq_worker_user_personnel_number_not_blank',
+            )
+        ]
     
     def __str__(self):
-        return f"{self.full_name} ({self.personnel_number})"
+        return f"{self.full_name} ({self.personnel_number or '—'})"
 
 
 class FamilyMember(models.Model):
@@ -145,6 +152,12 @@ class FamilyMember(models.Model):
         return f"{self.full_name} ({self.get_relationship_display()})"
 
 
+REQUEST_STATUS_CHOICES = [
+    ('active', 'Активно'),
+    ('inactive', 'Неактивно/Отклонено'),
+]
+
+
 class VacationRequest(models.Model):
     """Заявление на путевку"""
     RESORT_CHOICES = [
@@ -163,6 +176,8 @@ class VacationRequest(models.Model):
     end_date = models.DateField('Дата окончания поездки')
     price = models.DecimalField('Цена путевки', max_digits=10, decimal_places=2, null=True, blank=True)
     is_rejected = models.BooleanField('Отказ от поездки', default=False)
+    request_status = models.CharField('Статус заявления', max_length=20, choices=REQUEST_STATUS_CHOICES, default='active')
+    worker_goes = models.BooleanField('Работник едет', default=True)
     seasons = models.JSONField('Сезоны (для ДОЦ "Орленок")', default=list, blank=True, help_text='Список сезонов: 1, 2, 3, 4')
     study_certificate_file = models.FileField('Справка об очном обучении', upload_to='vacation/study_certificates/', null=True, blank=True, help_text='Обязательно для детей/внуков старше 18 лет')
     created_at = models.DateTimeField('Дата создания', auto_now_add=True)
@@ -184,6 +199,9 @@ class VacationRequest(models.Model):
     
     def get_status(self):
         """Возвращает статус путевки в зависимости от даты"""
+        if self.request_status == 'inactive':
+            return 'inactive'
+
         if self.is_rejected:
             return 'cancelled'
         
@@ -206,6 +224,7 @@ class VacationRequest(models.Model):
         status = self.get_status()
         status_map = {
             'cancelled': 'Отменена',
+            'inactive': 'Неактивно/Отклонено',
             'pending': 'В ожидании',
             'active': 'Идет',
             'completed': 'Окончена',
@@ -219,8 +238,9 @@ class VacationRequest(models.Model):
         # Если пенсионер умер, все его заявления неактивны и не занимают места
         if self.worker.status == 'pensioner' and self.worker.is_dead:
             return 0
-        # 1 место за работника + 1 место за каждого члена семьи
-        return 1 + self.family_members.count()
+        # 1 место за работника (если едет) + 1 место за каждого члена семьи
+        worker_places = 1 if getattr(self, 'worker_goes', True) else 0
+        return worker_places + self.family_members.count()
     
     @staticmethod
     def get_price_per_day(resort):
@@ -280,6 +300,8 @@ class MaterialAssistanceRequest(models.Model):
     worker = models.ForeignKey(Worker, on_delete=models.CASCADE, related_name='material_assistance_requests', verbose_name='Работник')
     assistance_type = models.CharField('Вид помощи', max_length=50, choices=ASSISTANCE_TYPE_CHOICES)
     amount = models.DecimalField('Сумма', max_digits=10, decimal_places=2)
+    request_status = models.CharField('Статус заявления', max_length=20, choices=REQUEST_STATUS_CHOICES, default='active')
+    is_issued = models.BooleanField('Выдано', default=False)
     accrued = models.DecimalField('Начислено', max_digits=10, decimal_places=2, null=True, blank=True)
     ipn = models.DecimalField('ИПН', max_digits=10, decimal_places=2, null=True, blank=True)
     to_pay = models.DecimalField('К выплате', max_digits=10, decimal_places=2, null=True, blank=True)
@@ -296,6 +318,8 @@ class MaterialAssistanceRequest(models.Model):
     
     def get_status(self):
         """Возвращает статус заявления"""
+        if self.request_status == 'inactive':
+            return 'inactive'
         # Если пенсионер умер, все его заявления неактивны
         if self.worker.status == 'pensioner' and self.worker.is_dead:
             return 'cancelled'
@@ -306,6 +330,7 @@ class MaterialAssistanceRequest(models.Model):
         status = self.get_status()
         status_map = {
             'cancelled': 'Отменено',
+            'inactive': 'Неактивно/Отклонено',
             'active': 'Активно',
         }
         return status_map.get(status, 'Неизвестно')
@@ -322,6 +347,8 @@ class CoalRequest(models.Model):
     worker = models.ForeignKey(Worker, on_delete=models.CASCADE, related_name='coal_requests', verbose_name='Работник')
     account_type = models.CharField('Тип счета', max_length=20, choices=ACCOUNT_TYPE_CHOICES)
     account_number = models.CharField('Номер счета', max_length=25, blank=True)  # KZ + 20 цифр = 22 символа (для совместимости, но данные хранятся в Worker)
+    request_status = models.CharField('Статус заявления', max_length=20, choices=REQUEST_STATUS_CHOICES, default='active')
+    is_issued = models.BooleanField('Выдано', default=False)
     accrued = models.DecimalField('Начислено', max_digits=10, decimal_places=2, null=True, blank=True)
     ipn = models.DecimalField('ИПН', max_digits=10, decimal_places=2, null=True, blank=True)
     to_pay = models.DecimalField('К выплате', max_digits=10, decimal_places=2, null=True, blank=True)
@@ -338,6 +365,8 @@ class CoalRequest(models.Model):
     
     def get_status(self):
         """Возвращает статус заявления"""
+        if self.request_status == 'inactive':
+            return 'inactive'
         # Если пенсионер умер, все его заявления неактивны
         if self.worker.status == 'pensioner' and self.worker.is_dead:
             return 'cancelled'
@@ -348,6 +377,7 @@ class CoalRequest(models.Model):
         status = self.get_status()
         status_map = {
             'cancelled': 'Отменено',
+            'inactive': 'Неактивно/Отклонено',
             'active': 'Активно',
         }
         return status_map.get(status, 'Неизвестно')
@@ -368,6 +398,7 @@ class FuneralRequest(models.Model):
     account_type = models.CharField('Тип счета', max_length=20, choices=ACCOUNT_TYPE_CHOICES)
     account_number = models.CharField('Номер счета', max_length=25, blank=True)  # KZ + 20 цифр = 22 символа
     to_pay = models.DecimalField('К выплате', max_digits=10, decimal_places=2, null=True, blank=True)
+    request_status = models.CharField('Статус заявления', max_length=20, choices=REQUEST_STATUS_CHOICES, default='active')
     
     created_at = models.DateTimeField('Дата создания', auto_now_add=True)
     updated_at = models.DateTimeField('Дата обновления', auto_now=True)
@@ -382,6 +413,8 @@ class FuneralRequest(models.Model):
     
     def get_status(self):
         """Возвращает статус заявления"""
+        if self.request_status == 'inactive':
+            return 'inactive'
         # Если пенсионер умер, все его заявления неактивны
         if self.worker.status == 'pensioner' and self.worker.is_dead:
             return 'cancelled'
@@ -392,6 +425,7 @@ class FuneralRequest(models.Model):
         status = self.get_status()
         status_map = {
             'cancelled': 'Отменено',
+            'inactive': 'Неактивно/Отклонено',
             'active': 'Активно',
         }
         return status_map.get(status, 'Неизвестно')

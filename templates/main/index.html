@@ -233,6 +233,13 @@
                                             <div><strong>Должность:</strong> <span id="worker-position"></span></div>
                                         </div>
                                     </div>
+
+                                    <div id="worker-goes-selection" style="margin-top: 12px;">
+                                        <label class="rejection-checkbox">
+                                            <input type="checkbox" id="worker-goes-checkbox" name="worker_goes" checked onchange="calculatePrice()">
+                                            <span>Работник едет</span>
+                                        </label>
+                                    </div>
                                     
                                     <div id="family-members-selection" style="display: none;">
                                         <h5 class="form-subtitle" style="margin-top: 20px;">Члены семьи (выберите, кто поедет):</h5>
@@ -597,6 +604,7 @@
                                     <option value="active">Идет</option>
                                     <option value="completed">Окончена</option>
                                     <option value="cancelled">Отменена</option>
+                                    <option value="inactive">Неактивно/Отклонено</option>
                                 </select>
                             </div>
                         </div>
@@ -619,9 +627,16 @@
                                                     {{ request.worker.full_name }}
                                                 </a>
                                             </h3>
-                                            <span class="report-card-status status-{{ request.get_status }}">
-                                                {{ request.get_status_display_text }}
-                                            </span>
+                                            <div style="display: flex; align-items: center; gap: 8px;">
+                                                <span class="report-card-status status-{{ request.get_status }}">
+                                                    {{ request.get_status_display_text }}
+                                                </span>
+                                                {% if not user_is_admin and request.get_status == 'cancelled' %}
+                                                <button class="btn btn-danger btn-sm" style="padding: 6px 10px;" onclick="event.stopPropagation(); deleteReport('vacation', {{ request.id }}); return false;">
+                                                    🗑
+                                                </button>
+                                                {% endif %}
+                                            </div>
                                         </div>
                                         <div class="report-card-info">
                                             <div class="report-card-info-item">
@@ -651,7 +666,7 @@
                                 </div>
                                 {% endfor %}
                                 {% for request in material_assistance_requests %}
-                                <div class="report-card-clickable" onclick="showMaterialAssistanceDetail({{ request.id }})" data-worker-id="{{ request.worker.id }}" data-report-type="material" data-report-status="">
+                                <div class="report-card-clickable" onclick="showMaterialAssistanceDetail({{ request.id }})" data-worker-id="{{ request.worker.id }}" data-report-type="material" data-report-status="{{ request.get_status }}">
                                     <div class="report-card-icon">💰</div>
                                     <div class="report-card-content">
                                         <div class="report-card-header">
@@ -660,8 +675,8 @@
                                                     {{ request.worker.full_name }}
                                                 </a>
                                             </h3>
-                                            <span class="report-card-status status-active">
-                                                Материальная помощь
+                                            <span class="report-card-status status-{{ request.get_status }}">
+                                                {{ request.get_status_display_text }}
                                             </span>
                                         </div>
                                         <div class="report-card-info">
@@ -688,7 +703,7 @@
                                 </div>
                                 {% endfor %}
                                 {% for request in coal_requests %}
-                                <div class="report-card-clickable" onclick="showCoalRequestDetail({{ request.id }})" data-worker-id="{{ request.worker.id }}" data-report-type="coal" data-report-status="">
+                                <div class="report-card-clickable" onclick="showCoalRequestDetail({{ request.id }})" data-worker-id="{{ request.worker.id }}" data-report-type="coal" data-report-status="{{ request.get_status }}">
                                     <div class="report-card-icon">🔥</div>
                                     <div class="report-card-content">
                                         <div class="report-card-header">
@@ -697,9 +712,16 @@
                                                     {{ request.worker.full_name }}
                                                 </a>
                                             </h3>
-                                            <span class="report-card-status status-active">
-                                                Заявление на уголь
-                                            </span>
+                                            <div style="display: flex; align-items: center; gap: 8px;">
+                                                <span class="report-card-status status-{{ request.get_status }}">
+                                                    {{ request.get_status_display_text }}
+                                                </span>
+                                                {% if not user_is_admin %}
+                                                <button class="btn btn-danger btn-sm" style="padding: 6px 10px;" onclick="event.stopPropagation(); deleteReport('coal', {{ request.id }}); return false;">
+                                                    🗑
+                                                </button>
+                                                {% endif %}
+                                            </div>
                                         </div>
                                         <div class="report-card-info">
                                             <div class="report-card-info-item">
@@ -725,7 +747,7 @@
                                 </div>
                                 {% endfor %}
                                 {% for request in funeral_requests %}
-                                <div class="report-card-clickable" onclick="showFuneralRequestDetail({{ request.id }})" data-worker-id="{{ request.worker.id }}" data-report-type="funeral" data-report-status="">
+                                <div class="report-card-clickable" onclick="showFuneralRequestDetail({{ request.id }})" data-worker-id="{{ request.worker.id }}" data-report-type="funeral" data-report-status="{{ request.get_status }}">
                                     <div class="report-card-icon">📄</div>
                                     <div class="report-card-content">
                                         <div class="report-card-header">
@@ -734,8 +756,8 @@
                                                     {{ request.worker.full_name }}
                                                 </a>
                                             </h3>
-                                            <span class="report-card-status status-active">
-                                                Заявление на погребение
+                                            <span class="report-card-status status-{{ request.get_status }}">
+                                                {{ request.get_status_display_text }}
                                             </span>
                                         </div>
                                         <div class="report-card-info">
@@ -936,6 +958,13 @@
                                 <p class="list-card-description">Просмотр и экспорт списка компенсации за льготный уголь</p>
                             </div>
                         </div>
+                        <div class="list-card" onclick="showMaterialAssistanceRegistryList()">
+                            <div class="list-card-icon">💰</div>
+                            <div class="list-card-content">
+                                <h3 class="list-card-title">Реестр материальной помощи</h3>
+                                <p class="list-card-description">Табличный реестр всех заявлений на материальную помощь</p>
+                            </div>
+                        </div>
                         <div class="list-card" onclick="showBonusPaymentList()">
                             <div class="list-card-icon">🏅</div>
                             <div class="list-card-content">
@@ -1009,7 +1038,7 @@
                                         {{ worker_form.full_name.errors }}
                                     </div>
                                     <div class="form-group">
-                                        <label class="form-label">{{ worker_form.personnel_number.label }} *</label>
+                                        <label class="form-label">{{ worker_form.personnel_number.label }}{% if worker_form.personnel_number.field.required %} *{% endif %}</label>
                                         {{ worker_form.personnel_number }}
                                         {{ worker_form.personnel_number.errors }}
                                     </div>
@@ -1197,7 +1226,7 @@
                                         {% for worker in workers %}
                                         <tr class="worker-row-clickable" onclick="showWorkerDetail({{ worker.id }})" style="cursor: pointer;">
                                             <td>{{ worker.full_name }}</td>
-                                            <td>{{ worker.personnel_number }}</td>
+                                            <td>{{ worker.personnel_number|default:"—" }}</td>
                                             <td>{{ worker.inn|default:"—" }}</td>
                                             <td><span class="status-badge status-{{ worker.status }}">{{ worker.get_status_display }}</span></td>
                                             <td>{{ worker.department }}</td>
@@ -1334,6 +1363,20 @@
             <button class="modal-close" onclick="closePensionerMaterialAssistanceModal()">✕</button>
         </div>
         <div class="modal-body" id="pensioner-material-assistance-modal-body">
+            <div class="loading">Загрузка...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для реестра материальной помощи -->
+<div class="modal" id="material-assistance-registry-modal">
+    <div class="modal-overlay" onclick="closeMaterialAssistanceRegistryModal()"></div>
+    <div class="modal-content" style="max-width: 1200px;">
+        <div class="modal-header">
+            <h2 class="modal-title">Реестр материальной помощи</h2>
+            <button class="modal-close" onclick="closeMaterialAssistanceRegistryModal()">✕</button>
+        </div>
+        <div class="modal-body" id="material-assistance-registry-modal-body">
             <div class="loading">Загрузка...</div>
         </div>
     </div>
@@ -2170,6 +2213,93 @@
             });
         }
     }
+
+    // Единое действие "Отказать" (только для админа)
+    function rejectRequest(requestType, requestId) {
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        let url = '';
+        if (requestType === 'vacation') {
+            url = `/api/vacation-request/${requestId}/reject/`;
+        } else if (requestType === 'material') {
+            url = `/api/material-assistance/${requestId}/reject/`;
+        } else if (requestType === 'coal') {
+            url = `/api/coal-request/${requestId}/reject/`;
+        } else if (requestType === 'funeral') {
+            url = `/api/funeral-request/${requestId}/reject/`;
+        }
+
+        if (!url) {
+            showError('Неизвестный тип заявления');
+            return;
+        }
+
+        if (!confirm('Отказать по заявлению? Оно перейдет в статус \"Неактивно/Отклонено\".')) {
+            return;
+        }
+
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': csrfToken,
+                'Content-Type': 'application/json',
+            },
+        })
+        .then(resp => resp.json())
+        .then(data => {
+            if (data && data.success) {
+                showSuccess('Заявление отклонено');
+                // Обновляем страницу, чтобы статусы в "Отчетах" пересчитались
+                setTimeout(() => window.location.reload(), 800);
+            } else {
+                showError((data && data.error) ? data.error : 'Ошибка при отказе');
+            }
+        })
+        .catch(err => {
+            console.error('Error:', err);
+            showError('Ошибка при отказе');
+        });
+    }
+
+    // Удаление заявлений в кабинете (только доступные по логике случаи)
+    function deleteReport(reportType, requestId) {
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        let url = '';
+        let confirmText = 'Удалить заявление?';
+
+        if (reportType === 'vacation') {
+            url = `/api/vacation-request/${requestId}/delete/`;
+            confirmText = 'Удалить отменённое заявление на путёвку?';
+        } else if (reportType === 'coal') {
+            url = `/api/coal-request/${requestId}/delete/`;
+            confirmText = 'Удалить заявление на уголь?';
+        } else {
+            showError('Удаление для этого типа заявления не поддерживается');
+            return;
+        }
+
+        if (!confirm(confirmText)) return;
+
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': csrfToken,
+                'Content-Type': 'application/json',
+            },
+        })
+        .then(resp => resp.json())
+        .then(data => {
+            if (data && data.success) {
+                showSuccess('Заявление удалено');
+                setTimeout(() => window.location.reload(), 800);
+            } else {
+                showError((data && data.error) ? data.error : 'Ошибка при удалении');
+            }
+        })
+        .catch(err => {
+            console.error('Error:', err);
+            showError('Ошибка при удалении');
+        });
+    }
     
     // Vacation Request Form
     function toggleVacationForm() {
@@ -2444,6 +2574,12 @@
         document.getElementById('selected-worker-info').style.display = 'block';
         workerSearchInput.value = fullName;
         workerAutocomplete.style.display = 'none';
+
+        // По умолчанию считаем, что работник едет
+        const workerGoesCheckbox = document.getElementById('worker-goes-checkbox');
+        if (workerGoesCheckbox) {
+            workerGoesCheckbox.checked = true;
+        }
         
         // Скрываем/показываем опции курортов для пенсионеров
         const resortSelect = document.querySelector('select[name="resort"]');
@@ -2867,6 +3003,12 @@
         }
         
         const selectedFamilyIds = Array.from(document.querySelectorAll('input[name="family_members"]:checked')).map(cb => parseInt(cb.value));
+        const workerGoesCheckbox = document.getElementById('worker-goes-checkbox');
+        const workerGoes = workerGoesCheckbox ? workerGoesCheckbox.checked : true;
+        if (!workerGoes && selectedFamilyIds.length === 0) {
+            showError('Выберите, кто поедет: отметьте "Работник едет" или выберите членов семьи.');
+            return false;
+        }
         const studyCertFile = document.getElementById('study-certificate-file');
         
         if (window.familyMembersData && selectedFamilyIds.length > 0) {
@@ -2919,6 +3061,7 @@
         const endDateInput = document.getElementById('end-date');
         const workerId = document.getElementById('selected-worker-id').value;
         const familyCheckboxes = document.querySelectorAll('input[name="family_members"]:checked');
+        const workerGoesCheckbox = document.getElementById('worker-goes-checkbox');
         
         if (!resortSelect || !startDateInput || !endDateInput || !workerId) {
             priceCalculation.innerHTML = '<div class="price-calculation-hint">Выберите курорт, даты и работника для расчета</div>';
@@ -2948,7 +3091,8 @@
         
         const diffTime = Math.abs(end - start);
         const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-        const peopleCount = 1 + familyCheckboxes.length; // 1 работник + члены семьи
+        const workerGoes = workerGoesCheckbox ? workerGoesCheckbox.checked : true;
+        const peopleCount = (workerGoes ? 1 : 0) + familyCheckboxes.length;
         
         const totalPrice = pricePerDay * days * peopleCount;
         
@@ -3035,6 +3179,8 @@
         fetch(`/vacation-request/${requestId}/`)
             .then(response => response.json())
             .then(data => {
+                const isAdmin = {% if user.username == 'АДМИН' or user.is_staff or user.is_superuser %}true{% else %}false{% endif %};
+                window.currentVacationDetailData = data;
                 // Обновляем заголовок модального окна
                 if (modalTitle) {
                     modalTitle.textContent = data.type || 'Заявление на путевку';
@@ -3186,6 +3332,8 @@
                                 </a>
                             </div>
                         </div>
+
+                        <div class="detail-section" id="vacation-edit-section" style="display: none;"></div>
                         
                         <div class="detail-section">
                             <div class="detail-section-rejection">
@@ -3202,6 +3350,16 @@
                         
                         <div class="detail-section">
                             <div class="detail-section-actions">
+                                ${isAdmin ? `
+                                <button class="btn btn-danger" onclick="rejectRequest('vacation', ${data.id})">
+                                    ⛔ Отказать
+                                </button>
+                                ` : ''}
+                                ${(data.vacation_details.status !== 'cancelled' && data.vacation_details.status !== 'inactive') ? `
+                                <button class="btn btn-secondary" onclick="openVacationEditForm()">
+                                    ✏️ Редактировать
+                                </button>
+                                ` : ''}
                                 <button class="btn btn-primary" onclick="downloadVacationRequest(${data.id})">
                                     📄 Скачать в Word
                                 </button>
@@ -3221,6 +3379,170 @@
     function closeVacationRequestModal() {
         document.getElementById('vacation-request-modal').style.display = 'none';
     }
+
+    function openVacationEditForm() {
+        const data = window.currentVacationDetailData;
+        if (!data || !data.id || !data.worker) {
+            showError('Не удалось открыть форму редактирования');
+            return;
+        }
+
+        const section = document.getElementById('vacation-edit-section');
+        if (!section) return;
+
+        section.style.display = 'block';
+        section.innerHTML = '<div class="loading">Загрузка формы редактирования...</div>';
+
+        fetch(`/api/worker/${data.worker.id}/family/`)
+            .then(resp => resp.json())
+            .then(workerData => {
+                const statusCode = workerData.status_code || '';
+                const isPensioner = statusCode === 'pensioner';
+                const selectedFamilyIds = new Set((data.selected_family_ids || []).map(Number));
+                const seasonsSelected = new Set((data.vacation_details.seasons || []).map(Number));
+
+                const resorts = [
+                    { code: 'orlenok', label: 'ДОЦ "Орленок"' },
+                    { code: 'zhartas', label: 'Санаторий "Жартас"' },
+                    { code: 'balkhash', label: 'Санаторий "Балхаш"' },
+                    { code: 'discovery', label: '"Дискавери"' },
+                    { code: 'shakhter', label: 'Дом отдыха "Шахтер"' },
+                ].filter(r => !(isPensioner && (r.code === 'balkhash' || r.code === 'discovery')));
+
+                const familyOptionsHtml = (workerData.family_members || []).map(m => {
+                    const checked = selectedFamilyIds.has(Number(m.id)) ? 'checked' : '';
+                    return `
+                        <label class="checkbox-label">
+                            <input type="checkbox" name="edit_family_members" value="${m.id}" ${checked}>
+                            <span>${m.full_name} (${m.relationship})</span>
+                        </label>
+                    `;
+                }).join('') || '<div class="price-calculation-hint">Члены семьи не добавлены</div>';
+
+                const seasonsHtml = [1,2,3,4].map(s => `
+                    <label class="checkbox-label" style="margin-right: 14px;">
+                        <input type="checkbox" name="edit_seasons" value="${s}" ${seasonsSelected.has(s) ? 'checked' : ''}>
+                        <span>${s} сезон</span>
+                    </label>
+                `).join('');
+
+                section.innerHTML = `
+                    <h3 class="detail-section-title">Редактировать заявление</h3>
+                    <div class="detail-grid">
+                        <div class="detail-item">
+                            <span class="detail-label">Курорт:</span>
+                            <span class="detail-value">
+                                <select id="edit-vacation-resort" class="form-input" onchange="toggleEditSeasons()">
+                                    ${resorts.map(r => `<option value="${r.code}" ${data.vacation_details.resort_code === r.code ? 'selected' : ''}>${r.label}</option>`).join('')}
+                                </select>
+                            </span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Дата начала:</span>
+                            <span class="detail-value">
+                                <input type="date" id="edit-vacation-start" class="form-input" value="${data.vacation_details.start_date_iso || ''}">
+                            </span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Дата окончания:</span>
+                            <span class="detail-value">
+                                <input type="date" id="edit-vacation-end" class="form-input" value="${data.vacation_details.end_date_iso || ''}">
+                            </span>
+                        </div>
+                        <div class="detail-item detail-item-full">
+                            <label class="rejection-checkbox">
+                                <input type="checkbox" id="edit-vacation-worker-goes" ${data.vacation_details.worker_goes ? 'checked' : ''}>
+                                <span>Работник едет</span>
+                            </label>
+                        </div>
+                        <div class="detail-item detail-item-full" id="edit-seasons-container" style="display: none;">
+                            <span class="detail-label">Сезоны (Орленок):</span>
+                            <div class="detail-value" style="margin-top: 8px;">
+                                ${seasonsHtml}
+                            </div>
+                        </div>
+                        <div class="detail-item detail-item-full">
+                            <span class="detail-label">Члены семьи (кто едет):</span>
+                            <div class="detail-value" style="margin-top: 8px;">
+                                ${familyOptionsHtml}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="detail-section-actions" style="margin-top: 12px;">
+                        <button class="btn btn-primary" onclick="saveVacationEdit()">
+                            💾 Сохранить
+                        </button>
+                        <button class="btn btn-secondary" onclick="closeVacationEditForm()">
+                            Отмена
+                        </button>
+                    </div>
+                `;
+
+                toggleEditSeasons();
+            })
+            .catch(err => {
+                console.error('Error:', err);
+                section.innerHTML = '<div class="error">Ошибка загрузки формы редактирования</div>';
+            });
+    }
+
+    function toggleEditSeasons() {
+        const resort = document.getElementById('edit-vacation-resort')?.value;
+        const container = document.getElementById('edit-seasons-container');
+        if (!container) return;
+        container.style.display = (resort === 'orlenok') ? 'block' : 'none';
+    }
+
+    function closeVacationEditForm() {
+        const section = document.getElementById('vacation-edit-section');
+        if (section) {
+            section.style.display = 'none';
+            section.innerHTML = '';
+        }
+    }
+
+    function saveVacationEdit() {
+        const data = window.currentVacationDetailData;
+        if (!data || !data.id) return;
+
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        const resort = document.getElementById('edit-vacation-resort')?.value || '';
+        const startDate = document.getElementById('edit-vacation-start')?.value || '';
+        const endDate = document.getElementById('edit-vacation-end')?.value || '';
+        const workerGoes = !!document.getElementById('edit-vacation-worker-goes')?.checked;
+
+        const familyMembers = Array.from(document.querySelectorAll('input[name="edit_family_members"]:checked')).map(cb => cb.value);
+        const seasons = Array.from(document.querySelectorAll('input[name="edit_seasons"]:checked')).map(cb => cb.value);
+
+        fetch(`/api/vacation-request/${data.id}/edit/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': csrfToken,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                resort,
+                start_date: startDate,
+                end_date: endDate,
+                worker_goes: workerGoes,
+                family_members: familyMembers,
+                seasons,
+            }),
+        })
+        .then(resp => resp.json())
+        .then(resp => {
+            if (resp && resp.success) {
+                showSuccess('Заявление обновлено');
+                setTimeout(() => window.location.reload(), 800);
+            } else {
+                showError((resp && resp.error) ? resp.error : 'Ошибка при сохранении');
+            }
+        })
+        .catch(err => {
+            console.error('Error:', err);
+            showError('Ошибка при сохранении');
+        });
+    }
     
     // Material Assistance Detail Modal
     function showMaterialAssistanceDetail(requestId) {
@@ -3234,6 +3556,7 @@
         fetch(`/material-assistance/${requestId}/`)
             .then(response => response.json())
             .then(data => {
+                const isAdmin = {% if user.username == 'АДМИН' or user.is_staff or user.is_superuser %}true{% else %}false{% endif %};
                 // Обновляем заголовок модального окна
                 if (modalTitle) {
                     modalTitle.textContent = data.type || 'Заявление на материальную помощь';
@@ -3305,6 +3628,10 @@
                                     <span class="detail-label">Дата создания:</span>
                                     <span class="detail-value">${data.created_at}</span>
                                 </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Статус:</span>
+                                    <span class="status-badge status-${data.assistance_details.status}">${data.assistance_details.status_text}</span>
+                                </div>
                             </div>
                         </div>
                         
@@ -3317,6 +3644,11 @@
                         
                         <div class="detail-section">
                             <div class="detail-section-actions">
+                                ${isAdmin ? `
+                                <button class="btn btn-danger" onclick="rejectRequest('material', ${data.id})">
+                                    ⛔ Отказать
+                                </button>
+                                ` : ''}
                                 <button class="btn btn-primary" onclick="downloadMaterialAssistance(${data.id})">
                                     📄 Скачать в Word
                                 </button>
@@ -3519,6 +3851,7 @@
         fetch(`/coal-request/${requestId}/`)
             .then(response => response.json())
             .then(data => {
+                const isAdmin = {% if user.username == 'АДМИН' or user.is_staff or user.is_superuser %}true{% else %}false{% endif %};
                 // Обновляем заголовок модального окна
                 if (modalTitle) {
                     modalTitle.textContent = data.type || 'Заявление на уголь';
@@ -3592,6 +3925,10 @@
                                     <span class="detail-label">Дата создания:</span>
                                     <span class="detail-value">${data.created_at}</span>
                                 </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Статус:</span>
+                                    <span class="status-badge status-${data.coal_details.status}">${data.coal_details.status_text}</span>
+                                </div>
                             </div>
                         </div>
                         
@@ -3604,6 +3941,11 @@
                         
                         <div class="detail-section">
                             <div class="detail-section-actions">
+                                ${isAdmin ? `
+                                <button class="btn btn-danger" onclick="rejectRequest('coal', ${data.id})">
+                                    ⛔ Отказать
+                                </button>
+                                ` : ''}
                                 <button class="btn btn-primary" onclick="downloadCoalRequest(${data.id})">
                                     📄 Скачать в Word
                                 </button>
@@ -3828,6 +4170,7 @@
         fetch(`/funeral-request/${requestId}/`)
             .then(response => response.json())
             .then(data => {
+                const isAdmin = {% if user.username == 'АДМИН' or user.is_staff or user.is_superuser %}true{% else %}false{% endif %};
                 // Обновляем заголовок модального окна
                 if (modalTitle) {
                     modalTitle.textContent = data.type || 'Заявление на погребение';
@@ -3911,6 +4254,10 @@
                                     <span class="detail-value">${data.funeral_details.account_number}</span>
                                 </div>
                                 ` : ''}
+                                <div class="detail-item">
+                                    <span class="detail-label">Статус:</span>
+                                    <span class="status-badge status-${data.funeral_details.status}">${data.funeral_details.status_text}</span>
+                                </div>
                             </div>
                         </div>
                         
@@ -3923,6 +4270,11 @@
                         
                         <div class="detail-section">
                             <div class="detail-section-actions">
+                                ${isAdmin ? `
+                                <button class="btn btn-danger" onclick="rejectRequest('funeral', ${data.id})">
+                                    ⛔ Отказать
+                                </button>
+                                ` : ''}
                                 <button class="btn btn-primary" onclick="downloadFuneralRequest(${data.id})">
                                     📄 Скачать в Word
                                 </button>
@@ -4267,6 +4619,7 @@
         fetch(url)
             .then(response => response.json())
             .then(data => {
+                const isAdmin = {% if user.username == 'АДМИН' or user.is_staff or user.is_superuser %}true{% else %}false{% endif %};
                 let html = `
                     <div class="coal-compensation-list-container">
                         <div class="compensation-header">
@@ -4274,11 +4627,21 @@
                                 <div class="compensation-period">
                                     <strong>Период:</strong> с ${data.period_start} по ${data.period_end}
                                 </div>
+                                ${data.unissued_count !== null && data.unissued_count !== undefined ? `
+                                <div class="compensation-period">
+                                    <strong>Невыдано:</strong> ${data.unissued_count} из ${data.total_count}
+                                </div>
+                                ` : ''}
                                 <div class="compensation-status">
                                     <span class="status-badge status-${data.status}">${data.status_display}</span>
                                 </div>
                             </div>
                             <div class="compensation-actions">
+                                ${isAdmin ? `
+                                <button class="btn btn-secondary" onclick="downloadCoalCompensationIssueLedgerExcel(${periodStart ? `'${periodStart}'` : 'null'})">
+                                    📄 Ведомость на выдачу
+                                </button>
+                                ` : ''}
                                 <button class="btn btn-primary" onclick="downloadCoalCompensationExcel(${periodStart ? `'${periodStart}'` : 'null'})">
                                     📥 Скачать в Excel
                                 </button>
@@ -4314,11 +4677,11 @@
                                         <th>Начислено</th>
                                         <th>ИПН</th>
                                         <th>К выплате</th>
+                                        ${isAdmin ? '<th>Выдать</th>' : ''}
                                     </tr>
                                 </thead>
                                 <tbody>
                                     ${data.compensation_data.length > 0 ? (() => {
-                                        const isAdmin = {% if user.username == 'АДМИН' or user.is_staff or user.is_superuser %}true{% else %}false{% endif %};
                                         const editableClass = isAdmin ? 'editable-cell' : '';
                                         let totalAccrued = 0;
                                         let totalIpn = 0;
@@ -4343,6 +4706,11 @@
                                                 <td class="${editableClass}" data-field="accrued" data-request-id="${item.coal_request_id}" data-has-benefits="${item.has_benefits || false}" data-is-dead="${item.is_dead || false}" data-list-type="coal" contenteditable="${isAdmin ? 'true' : 'false'}">${item.accrued || ''}</td>
                                                 <td class="${editableClass}" data-field="ipn" data-request-id="${item.coal_request_id}" data-list-type="coal" contenteditable="${isAdmin ? 'true' : 'false'}">${item.ipn || ''}</td>
                                                 <td class="${editableClass}" data-field="to_pay" data-request-id="${item.coal_request_id}" data-list-type="coal" contenteditable="${isAdmin ? 'true' : 'false'}">${item.to_pay || ''}</td>
+                                                ${isAdmin ? `
+                                                <td style="text-align: center;">
+                                                    <input type="checkbox" ${item.is_issued ? 'checked' : ''} onchange="toggleListIssued('coal', ${item.coal_request_id}, this.checked, ${periodStart ? `'${periodStart}'` : 'null'})">
+                                                </td>
+                                                ` : ''}
                                             </tr>
                                             `;
                                         }).join('');
@@ -4353,11 +4721,12 @@
                                                 <td style="font-weight: bold;">${totalAccrued.toFixed(2)}</td>
                                                 <td style="font-weight: bold;">${totalIpn.toFixed(2)}</td>
                                                 <td style="font-weight: bold;">${totalToPay.toFixed(2)}</td>
+                                                ${isAdmin ? '<td></td>' : ''}
                                             </tr>
                                         `;
                                         
                                         return rows + totalRow;
-                                    })() : '<tr><td colspan="9" class="text-center">Нет данных за выбранный период</td></tr>'}
+                                    })() : `<tr><td colspan="${isAdmin ? 10 : 9}" class="text-center">Нет данных за выбранный период</td></tr>`}
                                 </tbody>
                             </table>
                         </div>
@@ -4383,6 +4752,53 @@
             url += `?period_start=${periodStart}`;
         }
         window.location.href = url;
+    }
+
+    function downloadCoalCompensationIssueLedgerExcel(periodStart = null) {
+        let url = '/coal-compensation/excel/?only_unissued=1';
+        if (periodStart) {
+            url += `&period_start=${periodStart}`;
+        }
+        window.location.href = url;
+    }
+
+    function toggleListIssued(listType, requestId, isIssued, periodStart = null) {
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        let url = '';
+        if (listType === 'coal') {
+            url = `/api/coal-compensation/${requestId}/toggle-issued/`;
+        } else if (listType === 'assistance') {
+            url = `/api/pensioner-material-assistance/${requestId}/toggle-issued/`;
+        } else {
+            showError('Неизвестный тип списка');
+            return;
+        }
+
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': csrfToken,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ is_issued: !!isIssued }),
+        })
+        .then(resp => resp.json())
+        .then(data => {
+            if (data && data.success) {
+                // Перерисовываем список, чтобы обновить "Невыдано"
+                if (listType === 'coal') {
+                    showCoalCompensationList(periodStart);
+                } else {
+                    showPensionerMaterialAssistanceList(periodStart);
+                }
+            } else {
+                showError((data && data.error) ? data.error : 'Ошибка при обновлении отметки "Выдать"');
+            }
+        })
+        .catch(err => {
+            console.error('Error:', err);
+            showError('Ошибка при обновлении отметки "Выдать"');
+        });
     }
     
     // Bonus Payment List Functions
@@ -4658,6 +5074,7 @@
         fetch(url)
             .then(response => response.json())
             .then(data => {
+                const isAdmin = {% if user.username == 'АДМИН' or user.is_staff or user.is_superuser %}true{% else %}false{% endif %};
                 let html = `
                     <div class="coal-compensation-list-container">
                         <div class="compensation-header">
@@ -4665,11 +5082,21 @@
                                 <div class="compensation-period">
                                     <strong>Период:</strong> с ${data.period_start} по ${data.period_end}
                                 </div>
+                                ${data.unissued_count !== null && data.unissued_count !== undefined ? `
+                                <div class="compensation-period">
+                                    <strong>Невыдано:</strong> ${data.unissued_count} из ${data.total_count}
+                                </div>
+                                ` : ''}
                                 <div class="compensation-status">
                                     <span class="status-badge status-${data.status}">${data.status_display}</span>
                                 </div>
                             </div>
                             <div class="compensation-actions">
+                                ${isAdmin ? `
+                                <button class="btn btn-secondary" onclick="downloadPensionerMaterialAssistanceIssueLedgerExcel(${periodStart ? `'${periodStart}'` : 'null'})">
+                                    📄 Ведомость на выдачу
+                                </button>
+                                ` : ''}
                                 <button class="btn btn-primary" onclick="downloadPensionerMaterialAssistanceExcel(${periodStart ? `'${periodStart}'` : 'null'})">
                                     📥 Скачать в Excel
                                 </button>
@@ -4705,11 +5132,11 @@
                                         <th>НАЧИСЛЕНО</th>
                                         <th>ИПН</th>
                                         <th>К ВЫПЛАТЕ</th>
+                                        ${isAdmin ? '<th>Выдать</th>' : ''}
                                     </tr>
                                 </thead>
                                 <tbody>
                                     ${data.assistance_data.length > 0 ? (() => {
-                                        const isAdmin = {% if user.username == 'АДМИН' or user.is_staff or user.is_superuser %}true{% else %}false{% endif %};
                                         const editableClass = isAdmin ? 'editable-cell' : '';
                                         let totalAccrued = 0;
                                         let totalIpn = 0;
@@ -4734,6 +5161,11 @@
                                                 <td class="${editableClass}" data-field="accrued" data-request-id="${item.material_request_id}" data-has-benefits="${item.has_benefits || false}" data-list-type="assistance" contenteditable="${isAdmin ? 'true' : 'false'}">${item.accrued || ''}</td>
                                                 <td class="${editableClass}" data-field="ipn" data-request-id="${item.material_request_id}" data-list-type="assistance" contenteditable="${isAdmin ? 'true' : 'false'}">${item.ipn || ''}</td>
                                                 <td class="${editableClass}" data-field="to_pay" data-request-id="${item.material_request_id}" data-list-type="assistance" contenteditable="${isAdmin ? 'true' : 'false'}">${item.to_pay || ''}</td>
+                                                ${isAdmin ? `
+                                                <td style="text-align: center;">
+                                                    <input type="checkbox" ${item.is_issued ? 'checked' : ''} onchange="toggleListIssued('assistance', ${item.material_request_id}, this.checked, ${periodStart ? `'${periodStart}'` : 'null'})">
+                                                </td>
+                                                ` : ''}
                                             </tr>
                                             `;
                                         }).join('');
@@ -4744,11 +5176,12 @@
                                                 <td style="font-weight: bold;" class="total-accrued">${totalAccrued.toFixed(2)}</td>
                                                 <td style="font-weight: bold;" class="total-ipn">${totalIpn.toFixed(2)}</td>
                                                 <td style="font-weight: bold;" class="total-to-pay">${totalToPay.toFixed(2)}</td>
+                                                ${isAdmin ? '<td></td>' : ''}
                                             </tr>
                                         `;
                                         
                                         return rows + totalRow;
-                                    })() : '<tr><td colspan="9" class="text-center">Нет данных за выбранный период</td></tr>'}
+                                    })() : `<tr><td colspan="${isAdmin ? 10 : 9}" class="text-center">Нет данных за выбранный период</td></tr>`}
                                 </tbody>
                             </table>
                         </div>
@@ -4770,6 +5203,126 @@
     
     function downloadPensionerMaterialAssistanceExcel(periodStart = null) {
         let url = '/pensioner-material-assistance/excel/';
+        if (periodStart) {
+            url += `?period_start=${periodStart}`;
+        }
+        window.location.href = url;
+    }
+
+    function downloadPensionerMaterialAssistanceIssueLedgerExcel(periodStart = null) {
+        let url = '/pensioner-material-assistance/excel/?only_unissued=1';
+        if (periodStart) {
+            url += `&period_start=${periodStart}`;
+        }
+        window.location.href = url;
+    }
+
+    // Material Assistance Registry (table view)
+    function showMaterialAssistanceRegistryList(periodStart = null) {
+        const modal = document.getElementById('material-assistance-registry-modal');
+        const modalBody = document.getElementById('material-assistance-registry-modal-body');
+        const isAdmin = {% if user.username == 'АДМИН' or user.is_staff or user.is_superuser %}true{% else %}false{% endif %};
+
+        modal.style.display = 'flex';
+        modalBody.innerHTML = '<div class="loading">Загрузка...</div>';
+
+        let url = '/material-assistance/registry/list/';
+        if (periodStart) {
+            url += `?period_start=${periodStart}`;
+        }
+
+        fetch(url)
+            .then(resp => resp.json())
+            .then(data => {
+                let html = `
+                    <div class="coal-compensation-list-container">
+                        <div class="compensation-header">
+                            <div class="compensation-period-info">
+                                <div class="compensation-period">
+                                    <strong>Период:</strong> с ${data.period_start} по ${data.period_end}
+                                </div>
+                                ${data.unissued_count !== null && data.unissued_count !== undefined ? `
+                                <div class="compensation-period">
+                                    <strong>Невыдано:</strong> ${data.unissued_count} из ${data.total_count}
+                                </div>
+                                ` : ''}
+                                <div class="compensation-status">
+                                    <span class="status-badge status-${data.status}">${data.status_display}</span>
+                                </div>
+                            </div>
+                            <div class="compensation-actions">
+                                <button class="btn btn-primary" onclick="downloadMaterialAssistanceRegistryExcel(${periodStart ? `'${periodStart}'` : 'null'})">
+                                    📥 Скачать в Excel
+                                </button>
+                            </div>
+                        </div>
+                        ${data.all_periods && data.all_periods.length > 0 ? `
+                            <div class="period-selector">
+                                <label for="material-assistance-registry-period-select">Выберите период:</label>
+                                <select id="material-assistance-registry-period-select" class="form-input" onchange="if(this.value) { showMaterialAssistanceRegistryList(this.value); } else { showMaterialAssistanceRegistryList(null); }">
+                                    <option value="">Текущий период</option>
+                                    ${data.all_periods.map(p => {
+                                        const pDate = new Date(p + 'T00:00:00');
+                                        const pEnd = new Date(pDate);
+                                        pEnd.setMonth(pEnd.getMonth() + 1);
+                                        pEnd.setDate(19);
+                                        const pStartStr = pDate.toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit', year: 'numeric'});
+                                        const pEndStr = pEnd.toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit', year: 'numeric'});
+                                        return `<option value="${p}" ${periodStart === p ? 'selected' : ''}>${pStartStr} - ${pEndStr}</option>`;
+                                    }).join('')}
+                                </select>
+                            </div>
+                        ` : ''}
+                        <div class="compensation-table-container">
+                            <table class="statement-table">
+                                <thead>
+                                    <tr>
+                                        <th>№</th>
+                                        ${isAdmin ? '<th>Аккаунт</th>' : ''}
+                                        <th>ФИО</th>
+                                        <th>ИИН</th>
+                                        <th>Вид помощи</th>
+                                        <th>Сумма</th>
+                                        <th>Статус</th>
+                                        <th>Дата</th>
+                                        <th>Выдано</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${data.registry_data && data.registry_data.length > 0 ? data.registry_data.map(item => `
+                                        <tr ${item.user_account ? `title="Аккаунт: ${item.user_account}"` : ''}>
+                                            <td>${item.number}</td>
+                                            ${isAdmin ? `<td>${item.user_account || ''}</td>` : ''}
+                                            <td>${item.full_name}</td>
+                                            <td>${item.inn || ''}</td>
+                                            <td>${item.assistance_type}</td>
+                                            <td>${item.amount || ''}</td>
+                                            <td><span class="status-badge status-${item.status}">${item.status_text}</span></td>
+                                            <td>${item.created_at}</td>
+                                            <td style="text-align:center">${item.is_issued ? 'Да' : 'Нет'}</td>
+                                        </tr>
+                                    `).join('') : `<tr><td colspan="${isAdmin ? 9 : 8}" class="text-center">Нет данных за выбранный период</td></tr>`}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+                modalBody.innerHTML = html;
+            })
+            .catch(err => {
+                console.error('Ошибка при загрузке реестра матпомощи:', err);
+                modalBody.innerHTML = '<div class="error">Ошибка при загрузке данных. Попробуйте обновить страницу.</div>';
+                showError('Ошибка при загрузке реестра материальной помощи');
+            });
+    }
+
+    function closeMaterialAssistanceRegistryModal() {
+        const modal = document.getElementById('material-assistance-registry-modal');
+        modal.style.display = 'none';
+    }
+
+    function downloadMaterialAssistanceRegistryExcel(periodStart = null) {
+        let url = '/material-assistance/registry/excel/';
         if (periodStart) {
             url += `?period_start=${periodStart}`;
         }

@@ -38,10 +38,23 @@ urlpatterns = [
     path('funeral-services/excel/', views.generate_funeral_services_excel, name='generate_funeral_services_excel'),
     path('pensioner-material-assistance/list/', views.pensioner_material_assistance_list, name='pensioner_material_assistance_list'),
     path('pensioner-material-assistance/excel/', views.generate_pensioner_material_assistance_excel, name='generate_pensioner_material_assistance_excel'),
+    path('material-assistance/registry/list/', views.material_assistance_registry_list, name='material_assistance_registry_list'),
+    path('material-assistance/registry/excel/', views.generate_material_assistance_registry_excel, name='generate_material_assistance_registry_excel'),
     # API для обновления значений в списках (только для админа)
     path('api/coal-compensation/<int:request_id>/update-payment/', views.update_coal_compensation_payment, name='update_coal_compensation_payment'),
     path('api/bonus-payment/<int:worker_id>/update-payment/', views.update_bonus_payment, name='update_bonus_payment'),
     path('api/funeral-services/<int:request_id>/update-payment/', views.update_funeral_services_payment, name='update_funeral_services_payment'),
     path('api/pensioner-material-assistance/<int:request_id>/update-payment/', views.update_pensioner_material_assistance_payment, name='update_pensioner_material_assistance_payment'),
+    path('api/coal-compensation/<int:request_id>/toggle-issued/', views.toggle_coal_request_issued, name='toggle_coal_request_issued'),
+    path('api/pensioner-material-assistance/<int:request_id>/toggle-issued/', views.toggle_pensioner_material_assistance_issued, name='toggle_pensioner_material_assistance_issued'),
+    # API: единое действие "Отказать"
+    path('api/vacation-request/<int:request_id>/reject/', views.reject_vacation_request, name='reject_vacation_request'),
+    path('api/vacation-request/<int:request_id>/edit/', views.edit_vacation_request, name='edit_vacation_request'),
+    path('api/material-assistance/<int:request_id>/reject/', views.reject_material_assistance_request, name='reject_material_assistance_request'),
+    path('api/coal-request/<int:request_id>/reject/', views.reject_coal_request, name='reject_coal_request'),
+    path('api/funeral-request/<int:request_id>/reject/', views.reject_funeral_request, name='reject_funeral_request'),
+    # API: удаление заявлений в кабинете
+    path('api/vacation-request/<int:request_id>/delete/', views.delete_vacation_request, name='delete_vacation_request'),
+    path('api/coal-request/<int:request_id>/delete/', views.delete_coal_request, name='delete_coal_request'),
 ]
 

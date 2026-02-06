@@ -5,6 +5,9 @@ from pathlib import Path
 from datetime import datetime
 from main.models import Worker
 import openpyxl
+import os
+import secrets
+import string
 
 
 class Command(BaseCommand):
@@ -77,44 +80,54 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         # Сначала создаем заранее определенных пользователей
         users_data = [
-            ('КПТУ', 'change-me'),
-            ('УТТ', 'change-me'),
-            ('Ш. Ленина', 'change-me'),
-            ('Ш. Казахстанская', 'change-me'),
-            ('ш. Костенко', 'change-me'),
-            ('ш. Тентекская', 'change-me'),
-            ('ш. Шахтинская', 'change-me'),
-            ('ш. Абайская', 'change-me'),
-            ('ш. Саранская', 'change-me'),
-            ('ш. Кузембаева', 'change-me'),
-            ('Энергоуголь', 'change-me'),
-            ('ТОО Куpылыш мет', 'change-me'),
-            ('УСШМД', 'change-me'),
-            ('Цоф Восточная', 'change-me'),
-            ('УМТС', 'change-me'),
-            ('ГУ', 'change-me'),
-            ('АДМИН', 'change-me'),
+            ('КПТУ',),
+            ('УТТ',),
+            ('Ш. Ленина',),
+            ('Ш. Казахстанская',),
+            ('ш. Костенко',),
+            ('ш. Тентекская',),
+            ('ш. Шахтинская',),
+            ('ш. Абайская',),
+            ('ш. Саранская',),
+            ('ш. Кузембаева',),
+            ('Энергоуголь',),
+            ('ТОО Куpылыш мет',),
+            ('УСШМД',),
+            ('Цоф Восточная',),
+            ('УМТС',),
+            ('ГУ',),
+            ('АДМИН',),
         ]
 
         total_users_created = 0
         total_users_updated = 0
 
+        default_password = os.getenv('PROFSOUZ_DEFAULT_PASSWORD')
+        admin_password = os.getenv('PROFSOUZ_ADMIN_PASSWORD')
+
+        def _generate_password(length=16):
+            alphabet = string.ascii_letters + string.digits
+            return ''.join(secrets.choice(alphabet) for _ in range(length))
+
         # Создаем всех заранее определенных пользователей
-        for username, password in users_data:
+        for (username,) in users_data:
             user, created = User.objects.get_or_create(username=username)
             if created:
+                if username == 'АДМИН':
+                    password = admin_password or _generate_password(20)
+                else:
+                    password = default_password or _generate_password(16)
                 user.set_password(password)
                 user.save()
                 total_users_created += 1
                 self.stdout.write(
                     self.style.SUCCESS(f'✓ Создан пользователь: {username}')
                 )
+                # ВАЖНО: пароль выводим только при создании (не сохраняем в коде)
+                self.stdout.write(self.style.WARNING(f'  Пароль для "{username}": {password}'))
             else:
-                user.set_password(password)
-                user.save()
-                total_users_updated += 1
                 self.stdout.write(
-                    self.style.WARNING(f'↻ Обновлен пароль для: {username}')
+                    self.style.WARNING(f'↻ Пользователь уже существует: {username} (пароль не изменён)')
                 )
 
         # Теперь импортируем работников из Excel файлов

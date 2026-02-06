@@ -30,7 +30,7 @@
                         {{ worker_form.full_name.errors }}
                     </div>
                     <div class="form-group">
-                        <label class="form-label">{{ worker_form.personnel_number.label }} *</label>
+                        <label class="form-label">{{ worker_form.personnel_number.label }}{% if worker_form.personnel_number.field.required %} *{% endif %}</label>
                         {{ worker_form.personnel_number }}
                         {{ worker_form.personnel_number.errors }}
                     </div>

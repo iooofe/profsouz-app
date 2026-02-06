@@ -183,6 +183,7 @@ def index(request):
                         'id_number': request.POST.get(f'family_{i}_id_number', ''),
                         'id_issue_date': request.POST.get(f'family_{i}_id_issue_date', '') or None,
                         'id_issued_by': request.POST.get(f'family_{i}_id_issued_by', ''),
+                        'birth_date': request.POST.get(f'family_{i}_birth_date', '') or None,
                     })
                     if family_form.is_valid():
                         family_member = family_form.save(commit=False)
@@ -295,7 +296,7 @@ def index(request):
             'number': idx,
             'full_name': vacation.worker.full_name,
             'personnel_number': vacation.worker.personnel_number,
-            'vouchers_count': 1,  # Только работник
+            'vouchers_count': people_count,
             'bed_days': bed_days,
             'price': price,
             'vacation_id': vacation.id,  # ID путевки для перехода к отчету
@@ -340,7 +341,7 @@ def index(request):
             'number': idx,
             'full_name': vacation.worker.full_name,
             'personnel_number': vacation.worker.personnel_number,
-            'vouchers_count': 1,  # Только работник
+            'vouchers_count': people_count,
             'bed_days': bed_days,
             'price': price,
             'vacation_id': vacation.id,  # ID путевки для перехода к отчету
@@ -395,7 +396,7 @@ def worker_detail(request, worker_id):
     data = {
         'id': worker.id,
         'full_name': worker.full_name,
-        'personnel_number': worker.personnel_number,
+        'personnel_number': worker.personnel_number or '',
         'inn': worker.inn or '—',
         'status': worker.get_status_display(),
         'is_union_member': 'Да' if worker.is_union_member else 'Нет',
@@ -556,7 +557,7 @@ def search_workers(request):
         results.append({
             'id': worker.id,
             'full_name': worker.full_name,
-            'personnel_number': worker.personnel_number,
+            'personnel_number': worker.personnel_number or '',
             'inn': worker.inn or '',
             'status': worker.status,
             'status_display': worker.get_status_display(),
@@ -589,7 +590,7 @@ def get_worker_with_family(request, worker_id):
     data = {
         'id': worker.id,
         'full_name': worker.full_name,
-        'personnel_number': worker.personnel_number,
+        'personnel_number': worker.personnel_number or '',
         'inn': worker.inn or '',
         'status': worker.get_status_display(),
         'status_code': worker.status,  # Добавляем код статуса для проверки
@@ -682,6 +683,13 @@ def create_vacation_request(request):
         
         # Получаем список выбранных членов семьи (нужно для всех пользователей)
         family_member_ids = request.POST.getlist('family_members')
+
+        # Работник едет? (по умолчанию да)
+        worker_goes = request.POST.get('worker_goes') in ('on', '1', 'true', 'True', 'да', 'Да')
+
+        if not worker_goes and (not family_member_ids or len(family_member_ids) == 0):
+            messages.error(request, 'Необходимо выбрать хотя бы одного отдыхающего: работник или члены семьи.')
+            return redirect(f"{reverse('main:index')}?tab=applications")
         
         # Проверяем возраст детей/внуков
         if family_member_ids:
@@ -728,7 +736,7 @@ def create_vacation_request(request):
             limit, created = VacationLimit.get_or_create_limit(request.user, resort)
             
             # Подсчитываем количество мест для нового заявления
-            new_places = 1 + len(family_member_ids)  # 1 за работника + по 1 за каждого члена семьи
+            new_places = (1 if worker_goes else 0) + len(family_member_ids)  # работник (если едет) + члены семьи
             
             used_places = limit.get_used_places()
             remaining_places = limit.get_remaining_places()
@@ -753,6 +761,7 @@ def create_vacation_request(request):
                 resort=resort,
                 start_date=start_date,
                 end_date=end_date,
+                worker_goes=worker_goes,
                 study_certificate_file=study_certificate_file,
                 seasons=seasons
             )
@@ -815,7 +824,7 @@ def vacation_request_detail(request, request_id):
         'worker': {
             'id': vacation.worker.id,  # ID работника для перехода к карточке
             'full_name': vacation.worker.full_name,
-            'personnel_number': vacation.worker.personnel_number,
+            'personnel_number': vacation.worker.personnel_number or '',
             'inn': vacation.worker.inn or '—',
             'status': vacation.worker.get_status_display(),
             'department': vacation.worker.department,
@@ -825,17 +834,23 @@ def vacation_request_detail(request, request_id):
         },
         'vacation_details': {
             'resort': vacation.get_resort_display(),
+            'resort_code': vacation.resort,
             'start_date': vacation.start_date.strftime('%d.%m.%Y'),
+            'start_date_iso': vacation.start_date.strftime('%Y-%m-%d'),
             'end_date': vacation.end_date.strftime('%d.%m.%Y'),
+            'end_date_iso': vacation.end_date.strftime('%Y-%m-%d'),
             'duration_days': vacation.get_duration_days(),
             'status': vacation.get_status(),
             'status_text': vacation.get_status_display_text(),
             'price': display_price,
             'price_per_day': VacationRequest.get_price_per_day(vacation.resort),
             'people_count': vacation.get_places_count(),
+            'worker_goes': bool(getattr(vacation, 'worker_goes', True)),
+            'seasons': vacation.seasons or [],
         },
         'family_members': [
             {
+                'id': fm.id,
                 'full_name': fm.full_name,
                 'relationship': fm.get_relationship_display(),
                 'id_number': fm.id_number or '—',
@@ -844,6 +859,7 @@ def vacation_request_detail(request, request_id):
             }
             for fm in family_members
         ],
+        'selected_family_ids': [fm.id for fm in family_members],
         'is_rejected': vacation.is_rejected,
         'created_at': vacation.created_at.strftime('%d.%m.%Y %H:%M'),
         'preview_html': preview_html,
@@ -872,6 +888,119 @@ def update_vacation_request(request, request_id):
         return redirect(f"{reverse('main:index')}?tab=reports")
     
     return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+
+@login_required
+def edit_vacation_request(request, request_id):
+    """Редактирование параметров уже созданного заявления на путёвку"""
+    user_is_admin = is_admin(request.user)
+    if user_is_admin:
+        vacation = get_object_or_404(VacationRequest, id=request_id)
+    else:
+        vacation = get_object_or_404(VacationRequest, id=request_id, worker__user=request.user)
+
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    # Нельзя редактировать отменённые/отклонённые
+    if vacation.is_rejected or vacation.request_status == 'inactive' or (vacation.worker.status == 'pensioner' and vacation.worker.is_dead):
+        return JsonResponse({'error': 'Редактирование недоступно для неактивных/отменённых заявлений'}, status=400)
+
+    payload = {}
+    if request.content_type and 'application/json' in request.content_type:
+        try:
+            import json
+            payload = json.loads(request.body.decode('utf-8') or '{}')
+        except Exception:
+            payload = {}
+    else:
+        payload = request.POST
+
+    resort = (payload.get('resort') or '').strip()
+    start_date_str = payload.get('start_date')
+    end_date_str = payload.get('end_date')
+    seasons = payload.get('seasons') or []
+    worker_goes = payload.get('worker_goes')
+    family_member_ids = payload.get('family_members') or []
+
+    # Приводим типы
+    worker_goes = _parse_bool(worker_goes) if 'worker_goes' in payload else True
+    if isinstance(seasons, str):
+        seasons = [seasons]
+    if isinstance(family_member_ids, str):
+        family_member_ids = [family_member_ids]
+
+    try:
+        family_member_ids = [int(x) for x in family_member_ids if str(x).strip().isdigit()]
+    except Exception:
+        family_member_ids = []
+
+    if not resort:
+        return JsonResponse({'error': 'Не выбран курорт'}, status=400)
+
+    # Проверка: пенсионеры не могут Балхаш/Дискавери
+    if vacation.worker.status == 'pensioner' and resort in ['balkhash', 'discovery']:
+        resort_name = dict(VacationRequest.RESORT_CHOICES).get(resort, resort)
+        return JsonResponse({'error': f'Пенсионеры не могут выбирать курорт \"{resort_name}\"'}, status=400)
+
+    # Сезоны Орлёнок
+    if resort == 'orlenok':
+        if not seasons or len(seasons) == 0:
+            return JsonResponse({'error': 'Для ДОЦ \"Орленок\" необходимо выбрать хотя бы один сезон'}, status=400)
+        try:
+            seasons = [int(s) for s in seasons if str(s).isdigit()]
+            if not seasons or not all(1 <= s <= 4 for s in seasons):
+                return JsonResponse({'error': 'Сезоны должны быть числами от 1 до 4'}, status=400)
+        except Exception:
+            return JsonResponse({'error': 'Неверный формат сезонов'}, status=400)
+    else:
+        seasons = []
+
+    # Даты
+    try:
+        from datetime import datetime
+        start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+        end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+    except Exception:
+        return JsonResponse({'error': 'Неверный формат дат'}, status=400)
+
+    if end_date < start_date:
+        return JsonResponse({'error': 'Дата окончания не может быть раньше даты начала'}, status=400)
+
+    # Хотя бы один отдыхающий
+    if not worker_goes and len(family_member_ids) == 0:
+        return JsonResponse({'error': 'Необходимо выбрать хотя бы одного отдыхающего'}, status=400)
+
+    # Валидируем членов семьи + возрастные ограничения
+    family_members = FamilyMember.objects.filter(id__in=family_member_ids, worker=vacation.worker)
+
+    for fm in family_members:
+        if fm.is_child_or_grandchild():
+            if not fm.birth_date:
+                return JsonResponse({'error': f'Для {fm.get_relationship_display().lower()} {fm.full_name} необходимо указать дату рождения'}, status=400)
+            age = fm.get_age()
+            if age is None:
+                continue
+            if resort == 'orlenok' and age >= 14:
+                return JsonResponse({'error': f'{fm.get_relationship_display()} {fm.full_name} не проходит по возрасту для ДОЦ \"Орленок\" (возраст {age} лет, требуется до 14 лет)'}, status=400)
+            if resort != 'orlenok' and age >= 18:
+                if not vacation.study_certificate_file:
+                    return JsonResponse({'error': f'Для {fm.get_relationship_display().lower()} {fm.full_name} старше 18 лет необходимо прикрепить справку об очном обучении (отредактируйте заявление с приложением файла)'}, status=400)
+
+    # Применяем изменения
+    vacation.resort = resort
+    vacation.start_date = start_date
+    vacation.end_date = end_date
+    vacation.worker_goes = worker_goes
+    vacation.seasons = seasons
+    vacation.family_members.set(family_members)
+
+    # Пересчитываем цену
+    calculated_price = vacation.calculate_price()
+    vacation.price = calculated_price
+    vacation.save()
+
+    return JsonResponse({'success': True})
 
 
 def generate_vacation_request_preview(vacation):
@@ -1825,6 +1954,24 @@ def create_material_assistance_request(request):
         if not assistance_type:
             messages.error(request, 'Не выбран вид помощи!')
             return redirect(f"{reverse('main:index')}?tab=applications")
+
+        # Запрет дублей и взаимоисключение для пенсионеров: уголь ↔ лекарства (на лечение)
+        if worker.status == 'pensioner':
+            # Дубли (даже если пытались заполнить дважды) — блокируем повторное оформление
+            if MaterialAssistanceRequest.objects.filter(worker=worker, assistance_type=assistance_type).exists():
+                messages.error(
+                    request,
+                    'Повторное оформление запрещено: для этого пенсионера уже существует заявление на материальную помощь.'
+                )
+                return redirect(f"{reverse('main:index')}?tab=applications")
+
+            # Взаимоисключение: если есть уголь — нельзя "на лечение", и наоборот
+            if assistance_type == 'treatment' and CoalRequest.objects.filter(worker=worker).exists():
+                messages.error(
+                    request,
+                    'Нельзя оформить материальную помощь (лекарства), потому что для этого пенсионера уже есть заявление на уголь.'
+                )
+                return redirect(f"{reverse('main:index')}?tab=applications")
         
         # Для пенсионеров сумма не требуется (будет 0)
         if worker.status != 'pensioner':
@@ -2093,7 +2240,7 @@ def material_assistance_detail(request, request_id):
         'worker': {
             'id': material_assistance.worker.id,
             'full_name': material_assistance.worker.full_name,
-            'personnel_number': material_assistance.worker.personnel_number,
+            'personnel_number': material_assistance.worker.personnel_number or '',
             'inn': material_assistance.worker.inn or '—',
             'status': material_assistance.worker.get_status_display(),
             'department': material_assistance.worker.department,
@@ -2104,6 +2251,8 @@ def material_assistance_detail(request, request_id):
         'assistance_details': {
             'assistance_type': material_assistance.get_assistance_type_display(),
             'amount': float(material_assistance.amount),
+            'status': material_assistance.get_status(),
+            'status_text': material_assistance.get_status_display_text(),
         },
         'created_at': material_assistance.created_at.strftime('%d.%m.%Y %H:%M'),
         'preview_html': preview_html,
@@ -2164,6 +2313,21 @@ def create_coal_request(request):
         # Проверяем, что работник - пенсионер
         if worker.status != 'pensioner':
             messages.error(request, 'Заявление на уголь может подать только пенсионер!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
+
+        # Запрет дублей и взаимоисключение: уголь ↔ лекарства (матпомощь на лечение)
+        if CoalRequest.objects.filter(worker=worker).exists():
+            messages.error(
+                request,
+                'Повторное оформление запрещено: для этого пенсионера уже существует заявление на уголь.'
+            )
+            return redirect(f"{reverse('main:index')}?tab=applications")
+
+        if MaterialAssistanceRequest.objects.filter(worker=worker, worker__status='pensioner', assistance_type='treatment').exists():
+            messages.error(
+                request,
+                'Нельзя оформить заявление на уголь, потому что для этого пенсионера уже есть заявление на материальную помощь (лекарства).'
+            )
             return redirect(f"{reverse('main:index')}?tab=applications")
         
         # Получаем данные из формы
@@ -2352,7 +2516,7 @@ def coal_request_detail(request, request_id):
         'worker': {
             'id': coal_request.worker.id,
             'full_name': coal_request.worker.full_name,
-            'personnel_number': coal_request.worker.personnel_number,
+            'personnel_number': coal_request.worker.personnel_number or '',
             'inn': coal_request.worker.inn or '—',
             'status': coal_request.worker.get_status_display(),
             'department': coal_request.worker.department,
@@ -2364,6 +2528,8 @@ def coal_request_detail(request, request_id):
         'coal_details': {
             'account_type': coal_request.get_account_type_display(),
             'account_number': display_account_number,
+            'status': coal_request.get_status(),
+            'status_text': coal_request.get_status_display_text(),
             'has_passport_file': bool(coal_request.worker.house_passport_file),
             'passport_file_url': coal_request.worker.house_passport_file.url if coal_request.worker.house_passport_file else None,
             'passport_file_name': coal_request.worker.house_passport_file.name.split('/')[-1] if coal_request.worker.house_passport_file else None,
@@ -2623,7 +2789,7 @@ def funeral_request_detail(request, request_id):
         'worker': {
             'id': funeral_request.worker.id,
             'full_name': funeral_request.worker.full_name,
-            'personnel_number': funeral_request.worker.personnel_number,
+            'personnel_number': funeral_request.worker.personnel_number or '',
             'inn': funeral_request.worker.inn or '—',
             'status': funeral_request.worker.get_status_display(),
             'department': funeral_request.worker.department,
@@ -2637,6 +2803,8 @@ def funeral_request_detail(request, request_id):
             'applicant_inn': funeral_request.applicant_inn,
             'account_type': funeral_request.get_account_type_display(),
             'account_number': funeral_request.account_number or '—',
+            'status': funeral_request.get_status(),
+            'status_text': funeral_request.get_status_display_text(),
             'has_applicant_id_file': bool(funeral_request.applicant_id_file),
             'applicant_id_file_url': funeral_request.applicant_id_file.url if funeral_request.applicant_id_file else None,
             'applicant_id_file_name': funeral_request.applicant_id_file.name.split('/')[-1] if funeral_request.applicant_id_file else None,
@@ -2789,6 +2957,7 @@ def coal_compensation_list(request):
             'ipn': str(coal_request.ipn) if coal_request.ipn else '',
             'to_pay': str(coal_request.to_pay) if coal_request.to_pay else '',
             'coal_request_id': coal_request.id,
+            'is_issued': bool(getattr(coal_request, 'is_issued', False)),
             'worker_id': worker.id,
             'user_account': coal_request.user.username if user_is_admin else None,  # Аккаунт для админа
             'has_benefits': bool(worker.has_benefits) and not bool(worker.is_dead),  # Для расчета ИПН (если умер - не учитывать льготы)
@@ -2824,6 +2993,8 @@ def coal_compensation_list(request):
         status = 'closed'  # Закрыт
         status_display = 'Закрыт'
     
+    unissued_count = coal_requests.filter(is_issued=False).count() if hasattr(CoalRequest, 'is_issued') else None
+
     context = {
         'compensation_data': compensation_data,
         'period_start': period_start,
@@ -2840,6 +3011,8 @@ def coal_compensation_list(request):
         'all_periods': [p.strftime('%Y-%m-%d') for p in all_periods],
         'status': status,
         'status_display': status_display,
+        'total_count': len(compensation_data),
+        'unissued_count': unissued_count,
     })
 
 
@@ -2877,6 +3050,10 @@ def generate_coal_compensation_excel(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
+
+    # Ведомость на выдачу: только НЕвыданные
+    if request.GET.get('only_unissued') in ('1', 'true', 'True'):
+        coal_requests = coal_requests.filter(is_issued=False)
     
     # Создаем Excel файл
     wb = Workbook()
@@ -3981,6 +4158,7 @@ def pensioner_material_assistance_list(request):
             'ipn': str(material_request.ipn) if material_request.ipn else '',
             'to_pay': str(material_request.to_pay) if material_request.to_pay else '',
             'material_request_id': material_request.id,
+            'is_issued': bool(getattr(material_request, 'is_issued', False)),
             'worker_id': worker.id,
             'user_account': material_request.user.username if user_is_admin else None,  # Аккаунт для админа
             'has_benefits': bool(worker.has_benefits) and not bool(worker.is_dead),  # Для расчета ИПН (если умер - не учитывать льготы)
@@ -4024,6 +4202,8 @@ def pensioner_material_assistance_list(request):
         status = 'closed'  # Закрыт
         status_display = 'Закрыт'
     
+    unissued_count = material_requests.filter(is_issued=False).count() if hasattr(MaterialAssistanceRequest, 'is_issued') else None
+
     return JsonResponse({
         'assistance_data': assistance_data,
         'period_start': period_start.strftime('%d.%m.%Y'),
@@ -4031,7 +4211,171 @@ def pensioner_material_assistance_list(request):
         'all_periods': [p.strftime('%Y-%m-%d') for p in all_periods],
         'status': status,
         'status_display': status_display,
+        'total_count': len(assistance_data),
+        'unissued_count': unissued_count,
     })
+
+
+@login_required
+def material_assistance_registry_list(request):
+    """Реестр (таблица) всех заявлений на материальную помощь"""
+    user_is_admin = is_admin(request.user)
+
+    selected_period_start = request.GET.get('period_start')
+    if selected_period_start:
+        try:
+            period_start = date.fromisoformat(selected_period_start)
+            if period_start.month == 12:
+                period_end = date(period_start.year + 1, 1, 19)
+            else:
+                period_end = date(period_start.year, period_start.month + 1, 19)
+        except (ValueError, TypeError):
+            period_start, period_end = get_coal_compensation_period()
+    else:
+        period_start, period_end = get_coal_compensation_period()
+
+    if user_is_admin:
+        material_requests = MaterialAssistanceRequest.objects.filter(
+            created_at__date__gte=period_start,
+            created_at__date__lte=period_end
+        ).select_related('worker', 'user').order_by('worker__full_name')
+    else:
+        material_requests = MaterialAssistanceRequest.objects.filter(
+            worker__user=request.user,
+            created_at__date__gte=period_start,
+            created_at__date__lte=period_end
+        ).select_related('worker').order_by('worker__full_name')
+
+    registry_data = []
+    for idx, req in enumerate(material_requests, 1):
+        worker = req.worker
+        registry_data.append({
+            'number': idx,
+            'full_name': worker.full_name,
+            'inn': worker.inn or '',
+            'assistance_type': req.get_assistance_type_display(),
+            'amount': str(req.amount) if req.amount is not None else '',
+            'status': req.get_status(),
+            'status_text': req.get_status_display_text(),
+            'created_at': req.created_at.strftime('%d.%m.%Y'),
+            'material_request_id': req.id,
+            'worker_id': worker.id,
+            'user_account': req.user.username if user_is_admin else None,
+            'is_issued': bool(getattr(req, 'is_issued', False)),
+        })
+
+    # периоды для селектора
+    if user_is_admin:
+        all_requests = MaterialAssistanceRequest.objects.all().order_by('-created_at')
+    else:
+        all_requests = MaterialAssistanceRequest.objects.filter(worker__user=request.user).order_by('-created_at')
+
+    periods_set = set()
+    for req in all_requests:
+        req_date = req.created_at.date()
+        if req_date.day < 20:
+            if req_date.month == 1:
+                period_start_item = date(req_date.year - 1, 12, 20)
+            else:
+                period_start_item = date(req_date.year, req_date.month - 1, 20)
+        else:
+            period_start_item = date(req_date.year, req_date.month, 20)
+        periods_set.add(period_start_item)
+
+    all_periods = sorted(list(periods_set), reverse=True)
+
+    today = timezone.now().date()
+    if today >= period_start and today <= period_end:
+        status = 'active'
+        status_display = 'Введется'
+    else:
+        status = 'closed'
+        status_display = 'Закрыт'
+
+    unissued_count = material_requests.filter(is_issued=False).count() if hasattr(MaterialAssistanceRequest, 'is_issued') else None
+
+    return JsonResponse({
+        'registry_data': registry_data,
+        'period_start': period_start.strftime('%d.%m.%Y'),
+        'period_end': period_end.strftime('%d.%m.%Y'),
+        'all_periods': [p.strftime('%Y-%m-%d') for p in all_periods],
+        'status': status,
+        'status_display': status_display,
+        'total_count': len(registry_data),
+        'unissued_count': unissued_count,
+    })
+
+
+@login_required
+def generate_material_assistance_registry_excel(request):
+    """Excel-экспорт реестра материальной помощи"""
+    user_is_admin = is_admin(request.user)
+
+    selected_period_start = request.GET.get('period_start')
+    if selected_period_start:
+        try:
+            period_start = date.fromisoformat(selected_period_start)
+            if period_start.month == 12:
+                period_end = date(period_start.year + 1, 1, 19)
+            else:
+                period_end = date(period_start.year, period_start.month + 1, 19)
+        except (ValueError, TypeError):
+            period_start, period_end = get_coal_compensation_period()
+    else:
+        period_start, period_end = get_coal_compensation_period()
+
+    if user_is_admin:
+        material_requests = MaterialAssistanceRequest.objects.filter(
+            created_at__date__gte=period_start,
+            created_at__date__lte=period_end
+        ).select_related('worker', 'user').order_by('worker__full_name')
+    else:
+        material_requests = MaterialAssistanceRequest.objects.filter(
+            worker__user=request.user,
+            created_at__date__gte=period_start,
+            created_at__date__lte=period_end
+        ).select_related('worker').order_by('worker__full_name')
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Реестр матпомощи"
+
+    headers = ['№']
+    if user_is_admin:
+        headers.append('Аккаунт')
+    headers += ['ФИО', 'ИИН', 'Вид помощи', 'Сумма', 'Статус', 'Дата создания', 'Выдано']
+
+    for col_num, header in enumerate(headers, 1):
+        ws.cell(row=1, column=col_num, value=header)
+
+    row_num = 2
+    for idx, req in enumerate(material_requests, 1):
+        worker = req.worker
+        col = 1
+        ws.cell(row=row_num, column=col, value=idx); col += 1
+        if user_is_admin:
+            ws.cell(row=row_num, column=col, value=req.user.username); col += 1
+        ws.cell(row=row_num, column=col, value=worker.full_name); col += 1
+        ws.cell(row=row_num, column=col, value=worker.inn or ''); col += 1
+        ws.cell(row=row_num, column=col, value=req.get_assistance_type_display()); col += 1
+        ws.cell(row=row_num, column=col, value=float(req.amount) if req.amount is not None else None); col += 1
+        ws.cell(row=row_num, column=col, value=req.get_status_display_text()); col += 1
+        ws.cell(row=row_num, column=col, value=req.created_at.strftime('%d.%m.%Y')); col += 1
+        ws.cell(row=row_num, column=col, value='Да' if getattr(req, 'is_issued', False) else 'Нет')
+        row_num += 1
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    response = HttpResponse(
+        buffer.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    filename = f"Реестр_матпомощи_{period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}.xlsx"
+    safe_filename = transliterate_filename(filename)
+    response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
+    return response
 
 
 @login_required
@@ -4072,6 +4416,10 @@ def generate_pensioner_material_assistance_excel(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
+
+    # Ведомость на выдачу: только НЕвыданные
+    if request.GET.get('only_unissued') in ('1', 'true', 'True'):
+        material_requests = material_requests.filter(is_issued=False)
     
     # Создаем Excel файл
     wb = Workbook()
@@ -4545,3 +4893,152 @@ def update_pensioner_material_assistance_payment(request, request_id):
             return JsonResponse({'error': str(e)}, status=500)
     
     return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+
+@login_required
+def reject_vacation_request(request, request_id):
+    """Отказать по заявлению на путевку (перевод в единый статус Неактивно/Отклонено)"""
+    if not is_admin(request.user):
+        return JsonResponse({'error': 'Доступ запрещен'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    vacation = get_object_or_404(VacationRequest, id=request_id)
+    vacation.request_status = 'inactive'
+    vacation.save(update_fields=['request_status', 'updated_at'])
+    return JsonResponse({'success': True, 'status': vacation.get_status(), 'status_text': vacation.get_status_display_text()})
+
+
+@login_required
+def reject_material_assistance_request(request, request_id):
+    """Отказать по заявлению на материальную помощь (единый статус Неактивно/Отклонено)"""
+    if not is_admin(request.user):
+        return JsonResponse({'error': 'Доступ запрещен'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    material_request = get_object_or_404(MaterialAssistanceRequest, id=request_id)
+    material_request.request_status = 'inactive'
+    material_request.save(update_fields=['request_status', 'updated_at'])
+    return JsonResponse({'success': True, 'status': material_request.get_status(), 'status_text': material_request.get_status_display_text()})
+
+
+@login_required
+def reject_coal_request(request, request_id):
+    """Отказать по заявлению на уголь (единый статус Неактивно/Отклонено)"""
+    if not is_admin(request.user):
+        return JsonResponse({'error': 'Доступ запрещен'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    coal_request = get_object_or_404(CoalRequest, id=request_id)
+    coal_request.request_status = 'inactive'
+    coal_request.save(update_fields=['request_status', 'updated_at'])
+    return JsonResponse({'success': True, 'status': coal_request.get_status(), 'status_text': coal_request.get_status_display_text()})
+
+
+@login_required
+def reject_funeral_request(request, request_id):
+    """Отказать по заявлению на погребение (единый статус Неактивно/Отклонено)"""
+    if not is_admin(request.user):
+        return JsonResponse({'error': 'Доступ запрещен'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    funeral_request = get_object_or_404(FuneralRequest, id=request_id)
+    funeral_request.request_status = 'inactive'
+    funeral_request.save(update_fields=['request_status', 'updated_at'])
+    return JsonResponse({'success': True, 'status': funeral_request.get_status(), 'status_text': funeral_request.get_status_display_text()})
+
+
+def _parse_bool(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    s = str(value).strip().lower()
+    return s in ('1', 'true', 'yes', 'да', 'y', 'on')
+
+
+@login_required
+def toggle_coal_request_issued(request, request_id):
+    """Флажок 'Выдать/Выдано' для списка угля (только админ)"""
+    if not is_admin(request.user):
+        return JsonResponse({'error': 'Доступ запрещен'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    coal_request = get_object_or_404(CoalRequest, id=request_id)
+
+    is_issued = None
+    if request.content_type and 'application/json' in request.content_type:
+        try:
+            import json
+            payload = json.loads(request.body.decode('utf-8') or '{}')
+            is_issued = payload.get('is_issued')
+        except Exception:
+            is_issued = None
+    if is_issued is None:
+        is_issued = request.POST.get('is_issued')
+
+    coal_request.is_issued = _parse_bool(is_issued)
+    coal_request.save(update_fields=['is_issued', 'updated_at'])
+
+    return JsonResponse({'success': True, 'is_issued': bool(coal_request.is_issued)})
+
+
+@login_required
+def toggle_pensioner_material_assistance_issued(request, request_id):
+    """Флажок 'Выдать/Выдано' для списка матпомощи пенсионерам (только админ)"""
+    if not is_admin(request.user):
+        return JsonResponse({'error': 'Доступ запрещен'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    material_request = get_object_or_404(MaterialAssistanceRequest, id=request_id)
+
+    is_issued = None
+    if request.content_type and 'application/json' in request.content_type:
+        try:
+            import json
+            payload = json.loads(request.body.decode('utf-8') or '{}')
+            is_issued = payload.get('is_issued')
+        except Exception:
+            is_issued = None
+    if is_issued is None:
+        is_issued = request.POST.get('is_issued')
+
+    material_request.is_issued = _parse_bool(is_issued)
+    material_request.save(update_fields=['is_issued', 'updated_at'])
+
+    return JsonResponse({'success': True, 'is_issued': bool(material_request.is_issued)})
+
+
+@login_required
+def delete_vacation_request(request, request_id):
+    """Удаление отменённого заявления на путёвку из кабинета пользователя"""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    # Чтобы не ломать бизнес-логику, ограничиваем удаление только в личном кабинете
+    if is_admin(request.user):
+        return JsonResponse({'error': 'Удаление доступно только в кабинете пользователя'}, status=403)
+
+    vacation = get_object_or_404(VacationRequest, id=request_id, worker__user=request.user)
+    if vacation.get_status() != 'cancelled':
+        return JsonResponse({'error': 'Удаление доступно только для отменённых заявлений'}, status=400)
+
+    vacation.delete()
+    return JsonResponse({'success': True})
+
+
+@login_required
+def delete_coal_request(request, request_id):
+    """Удаление заявления на уголь из кабинета пользователя"""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    if is_admin(request.user):
+        return JsonResponse({'error': 'Удаление доступно только в кабинете пользователя'}, status=403)
+
+    coal_request = get_object_or_404(CoalRequest, id=request_id, worker__user=request.user)
+    coal_request.delete()
+    return JsonResponse({'success': True})

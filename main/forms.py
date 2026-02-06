@@ -68,6 +68,20 @@ class FamilyMemberForm(forms.ModelForm):
 
 
 class WorkerForm(forms.ModelForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Табельный номер может отсутствовать (например, при переходе в САП)
+        if 'personnel_number' in self.fields:
+            self.fields['personnel_number'].required = False
+            self.fields['personnel_number'].help_text = 'Можно оставить пустым (если табельного номера нет).'
+
+    def clean_personnel_number(self):
+        personnel_number = self.cleaned_data.get('personnel_number')
+        if personnel_number is None:
+            return None
+        personnel_number = str(personnel_number).strip()
+        return personnel_number or None
+
     class Meta:
         model = Worker
         fields = [

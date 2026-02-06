@@ -12,7 +12,7 @@
 
 ```bash
 ssh root@your-server-ip
-# Пароль: ваш_пароль
+# Пароль: (укажите свой пароль / используйте SSH-ключ)
 
 # Выполните автоматический деплой
 bash <(curl -s https://raw.githubusercontent.com/iooofe/profsouz/main/deploy_full.sh)
@@ -82,7 +82,7 @@ tail -f /var/log/nginx/profsouz_error.log
 
 4. **Войдите в систему:**
 - Логин: `АДМИН`
-- Пароль: `change-me`
+- Пароль: (см. команду `python manage.py create_users` / задайте свой)
 
 ## 🛠️ Управление проектом
 
