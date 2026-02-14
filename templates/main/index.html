@@ -187,7 +187,7 @@
                             </div>
                         </div>
                         <div class="application-card" onclick="toggleFuneralRequestForm()">
-                            <div class="application-card-icon">📄</div>
+                            <div class="application-card-icon">DOC</div>
                             <div class="application-card-content">
                                 <h3 class="application-card-title">Заявление на погребение</h3>
                                 <p class="application-card-description">Создать заявление на погребение пенсионеров</p>
@@ -223,7 +223,7 @@
                                     <div class="selected-worker-card" id="selected-worker-card">
                                         <h5>Выбранный работник:</h5>
                                         <div id="worker-death-warning" class="worker-death-warning" style="display: none;">
-                                            <strong>⚠️ ВНИМАНИЕ:</strong> Пенсионер помечен как умерший!
+                                            <strong>ВНИМАНИЕ:</strong> Пенсионер помечен как умерший!
                                         </div>
                                         <div class="worker-info-grid">
                                             <div><strong>ФИО:</strong> <span id="worker-full-name"></span></div>
@@ -426,7 +426,7 @@
                                     <div class="selected-worker-card" id="coal-request-selected-worker-card">
                                         <h5>Выбранный работник:</h5>
                                         <div id="coal-request-worker-death-warning" class="worker-death-warning" style="display: none;">
-                                            <strong>⚠️ ВНИМАНИЕ:</strong> Пенсионер помечен как умерший!
+                                            <strong>ВНИМАНИЕ:</strong> Пенсионер помечен как умерший!
                                         </div>
                                         <div class="worker-info-grid">
                                             <div><strong>ФИО:</strong> <span id="coal-request-worker-full-name"></span></div>
@@ -748,7 +748,7 @@
                                 {% endfor %}
                                 {% for request in funeral_requests %}
                                 <div class="report-card-clickable" onclick="showFuneralRequestDetail({{ request.id }})" data-worker-id="{{ request.worker.id }}" data-report-type="funeral" data-report-status="{{ request.get_status }}">
-                                    <div class="report-card-icon">📄</div>
+                                    <div class="report-card-icon">DOC</div>
                                     <div class="report-card-content">
                                         <div class="report-card-header">
                                             <h3 class="report-card-title">
@@ -806,8 +806,8 @@
                         <div class="statement-header">
                             <div class="statement-title-wrapper">
                                 <h3 class="statement-title">Ведомость путевок за Жартас</h3>
-                                <span class="statement-status status-{{ zhartas_statement.status }}">
-                                    {{ zhartas_statement.get_status_display }}
+                                <span class="statement-status status-{{ zhartas_statement_status }}">
+                                    {{ zhartas_statement_status_display }}
                                 </span>
                             </div>
                             <div style="display: flex; gap: var(--spacing-md); align-items: center; flex-wrap: wrap;">
@@ -825,7 +825,7 @@
                                 {% endif %}
                             </div>
                             <a href="{% url 'main:generate_zhartas_statement_excel' %}?period_start={{ statement_period_start|date:'Y-m-d' }}" class="btn btn-primary" id="zhartas-excel-link">
-                                📊 Скачать в Excel
+                                Скачать в Excel
                             </a>
                         </div>
                         
@@ -878,8 +878,8 @@
                         <div class="statement-header">
                             <div class="statement-title-wrapper">
                                 <h3 class="statement-title">Ведомость путевок за Шахтер</h3>
-                                <span class="statement-status status-{{ shakhter_statement.status }}">
-                                    {{ shakhter_statement.get_status_display }}
+                                <span class="statement-status status-{{ shakhter_statement_status }}">
+                                    {{ shakhter_statement_status_display }}
                                 </span>
                             </div>
                             <div style="display: flex; gap: var(--spacing-md); align-items: center; flex-wrap: wrap;">
@@ -897,7 +897,7 @@
                                 {% endif %}
                             </div>
                             <a href="{% url 'main:generate_shakhter_statement_excel' %}?period_start={{ statement_period_start|date:'Y-m-d' }}" class="btn btn-primary" id="shakhter-excel-link">
-                                📊 Скачать в Excel
+                                Скачать в Excel
                             </a>
                         </div>
                         
@@ -1204,7 +1204,7 @@
                         {% if workers %}
                             <div class="workers-count">
                                 {% if search_query %}
-                                    Найдено: {{ workers.count }}
+                                    Найдено: {{ workers_count }}
                                 {% else %}
                                     Всего работников: {{ all_workers_count }}
                                 {% endif %}
@@ -1237,6 +1237,21 @@
                                     </tbody>
                                 </table>
                             </div>
+                            {% if workers_page.paginator.num_pages > 1 %}
+                            <div class="workers-pagination">
+                                {% if workers_page.has_previous %}
+                                    <a class="btn btn-secondary btn-sm" href="?tab=workers&page=1{% if search_query %}&search={{ search_query|urlencode }}{% endif %}">Первая</a>
+                                    <a class="btn btn-secondary btn-sm" href="?tab=workers&page={{ workers_page.previous_page_number }}{% if search_query %}&search={{ search_query|urlencode }}{% endif %}">Назад</a>
+                                {% endif %}
+                                <span class="workers-page-info">
+                                    Страница {{ workers_page.number }} из {{ workers_page.paginator.num_pages }}
+                                </span>
+                                {% if workers_page.has_next %}
+                                    <a class="btn btn-secondary btn-sm" href="?tab=workers&page={{ workers_page.next_page_number }}{% if search_query %}&search={{ search_query|urlencode }}{% endif %}">Вперед</a>
+                                    <a class="btn btn-secondary btn-sm" href="?tab=workers&page={{ workers_page.paginator.num_pages }}{% if search_query %}&search={{ search_query|urlencode }}{% endif %}">Последняя</a>
+                                {% endif %}
+                            </div>
+                            {% endif %}
                         {% else %}
                             <div class="empty-state">
                                 <p>{% if search_query %}По вашему запросу ничего не найдено{% else %}Работники не добавлены{% endif %}</p>
@@ -1684,6 +1699,7 @@
             const workersCount = document.querySelector('.workers-count');
             const emptyState = document.querySelector('.empty-state');
             const tableContainer = document.querySelector('.workers-table-container');
+            const pagination = document.querySelector('.workers-pagination');
             
             if (!tbody) return;
             
@@ -1698,6 +1714,7 @@
                     workersCount.innerHTML = `Найдено: ${workers.length}`;
                     workersCount.style.display = '';
                 }
+                if (pagination) pagination.style.display = 'none';
                 
                 // Заполняем таблицу
                 workers.forEach(worker => {
@@ -1732,6 +1749,7 @@
                     workersCount.innerHTML = 'Найдено: 0';
                     workersCount.style.display = '';
                 }
+                if (pagination) pagination.style.display = 'none';
             }
         }
         
@@ -1759,6 +1777,7 @@
                         // Если запрос пустой, перезагружаем страницу для показа всех работников
                         const url = new URL(window.location);
                         url.searchParams.delete('search');
+                        url.searchParams.delete('page');
                         url.searchParams.set('tab', tabName);
                         window.location.href = url.toString();
                     }
@@ -1766,6 +1785,7 @@
                     // Для других вкладок используем обычную перезагрузку
                     const url = new URL(window.location);
                     url.searchParams.set('tab', tabName);
+                    url.searchParams.delete('page');
                     if (searchInput.value) {
                         url.searchParams.set('search', searchInput.value);
                     } else {
@@ -1783,6 +1803,7 @@
                 // Обновляем URL без перезагрузки страницы
                 const url = new URL(window.location);
                 url.searchParams.set('tab', tabName);
+                url.searchParams.delete('page');
                 if (query) {
                     url.searchParams.set('search', query);
                 } else {
@@ -1803,15 +1824,12 @@
                                     console.error('Ошибка поиска:', error);
                                 });
                         } else {
-                            // Если запрос пустой, показываем всех работников
-                            fetch(`/api/search-workers/?q=`)
-                                .then(response => response.json())
-                                .then(data => {
-                                    updateWorkersTable(data.results || []);
-                                })
-                                .catch(error => {
-                                    console.error('Ошибка поиска:', error);
-                                });
+                            // Если запрос пустой, перезагружаем страницу и берем пагинацию с сервера
+                            const url = new URL(window.location);
+                            url.searchParams.set('tab', tabName);
+                            url.searchParams.delete('search');
+                            url.searchParams.delete('page');
+                            window.location.href = url.toString();
                         }
                     }
                 }, 500); // Задержка 500мс перед отправкой
@@ -2017,7 +2035,7 @@
                                     <span class="detail-label">Файл подтверждающий льготы:</span>
                                     <span class="detail-value">
                                         <a href="${data.benefits_file}" class="btn btn-secondary btn-link" target="_blank">
-                                            📥 Скачать: ${data.benefits_file_name || 'файл'}
+                                            Скачать: ${data.benefits_file_name || 'файл'}
                                         </a>
                                     </span>
                                 </div>
@@ -2032,7 +2050,7 @@
                                     <span class="detail-label">Файл подтверждающий шахтерскую/трудовую славу:</span>
                                     <span class="detail-value">
                                         <a href="${data.miner_glory_file}" class="btn btn-secondary btn-link" target="_blank">
-                                            📥 Скачать: ${data.miner_glory_file_name || 'файл'}
+                                            Скачать: ${data.miner_glory_file_name || 'файл'}
                                         </a>
                                     </span>
                                 </div>
@@ -2042,7 +2060,7 @@
                                     <span class="detail-label">Копия технического паспорта дома:</span>
                                     <span class="detail-value">
                                         <a href="/worker/${data.id}/file/house_passport/" class="btn btn-secondary btn-link" target="_blank">
-                                            📥 Скачать: ${data.house_passport_file_name || 'файл'}
+                                            Скачать: ${data.house_passport_file_name || 'файл'}
                                         </a>
                                     </span>
                                 </div>
@@ -2052,7 +2070,7 @@
                                     <span class="detail-label">Копия удостоверения пенсионера:</span>
                                     <span class="detail-value">
                                         <a href="/worker/${data.id}/file/pensioner_id/" class="btn btn-secondary btn-link" target="_blank">
-                                            📥 Скачать: ${data.pensioner_id_file_name || 'файл'}
+                                            Скачать: ${data.pensioner_id_file_name || 'файл'}
                                         </a>
                                     </span>
                                 </div>
@@ -2071,7 +2089,7 @@
                                 ` : ''}
                                 ${data.is_dead === 'Да' ? `
                                 <div class="detail-item">
-                                    <span class="detail-label error-label">⚠️ Пенсионер мертв:</span>
+                                    <span class="detail-label error-label">Пенсионер мертв:</span>
                                     <span class="detail-value error-value">${data.is_dead}</span>
                                 </div>
                                 ` : ''}
@@ -2080,7 +2098,7 @@
                                     <span class="detail-label">Справка о смерти:</span>
                                     <span class="detail-value">
                                         <a href="/worker/${data.id}/file/death_certificate/" class="btn btn-secondary btn-link" target="_blank">
-                                            📥 Скачать: ${data.death_certificate_file_name || 'файл'}
+                                            Скачать: ${data.death_certificate_file_name || 'файл'}
                                         </a>
                                     </span>
                                 </div>
@@ -2537,7 +2555,7 @@
                                 return `
                                     <div class="autocomplete-item" onclick="selectWorker(${worker.id}, '${fullName}', '${personnelNumber}', '${department}', '${position}', '${statusDisplay}', ${isDead}, '${status}')">
                                         <strong>${worker.full_name}</strong><br>
-                                        <small>${worker.personnel_number} - ${worker.department}${isDead ? ' ⚠️ УМЕР' : ''}</small>
+                                        <small>${worker.personnel_number} - ${worker.department}${isDead ? ' УМЕР' : ''}</small>
                                     </div>
                                 `;
                             }).join('');
@@ -2861,7 +2879,7 @@
                                 return `
                                     <div class="autocomplete-item" onclick="selectMaterialAssistanceWorker(${worker.id}, '${fullName}', '${personnelNumber}', '${department}', '${position}', '${status}', '${statusDisplay}', ${isDead})">
                                         <strong>${worker.full_name}${isAdmin && userAccount ? ` <span style="color: var(--text-secondary); font-size: 12px;">(${userAccount})</span>` : ''}</strong><br>
-                                        <small>${worker.personnel_number} - ${worker.department}${isDead ? ' ⚠️ УМЕР' : ''}</small>
+                                        <small>${worker.personnel_number} - ${worker.department}${isDead ? ' УМЕР' : ''}</small>
                                     </div>
                                 `;
                             }).join('');
@@ -3361,7 +3379,7 @@
                                 </button>
                                 ` : ''}
                                 <button class="btn btn-primary" onclick="downloadVacationRequest(${data.id})">
-                                    📄 Скачать в Word
+                                    Скачать в Word
                                 </button>
                             </div>
                         </div>
@@ -3650,7 +3668,7 @@
                                 </button>
                                 ` : ''}
                                 <button class="btn btn-primary" onclick="downloadMaterialAssistance(${data.id})">
-                                    📄 Скачать в Word
+                                    Скачать в Word
                                 </button>
                             </div>
                         </div>
@@ -3786,7 +3804,7 @@
                                 return `
                                     <div class="autocomplete-item" onclick="selectCoalRequestWorker(${worker.id}, '${fullName}', '${personnelNumber}', '${statusDisplay}', ${isDead}, '${cardAccount}', '${currentAccount}')">
                                         <strong>${worker.full_name}${isAdmin && userAccount ? ` <span style="color: var(--text-secondary); font-size: 12px;">(${userAccount})</span>` : ''}</strong><br>
-                                        <small>${worker.personnel_number} - Пенсионер${isDead ? ' ⚠️ УМЕР' : ''}</small>
+                                        <small>${worker.personnel_number} - Пенсионер${isDead ? ' УМЕР' : ''}</small>
                                     </div>
                                 `;
                             }).join('');
@@ -3885,7 +3903,7 @@
                                 </div>
                                 ${data.worker.is_dead === 'Да' ? `
                                 <div class="detail-item">
-                                    <span class="detail-label error-label">⚠️ Пенсионер мертв:</span>
+                                    <span class="detail-label error-label">Пенсионер мертв:</span>
                                     <span class="detail-value error-value">${data.worker.is_dead}</span>
                                 </div>
                                 ` : ''}
@@ -3947,7 +3965,7 @@
                                 </button>
                                 ` : ''}
                                 <button class="btn btn-primary" onclick="downloadCoalRequest(${data.id})">
-                                    📄 Скачать в Word
+                                    Скачать в Word
                                 </button>
                             </div>
                         </div>
@@ -4105,7 +4123,7 @@
                                 return `
                                     <div class="autocomplete-item" onclick="selectFuneralRequestWorker(${worker.id}, '${fullName}', '${personnelNumber}', '${statusDisplay}', ${isDead}, '${cardAccount}', '${currentAccount}')">
                                         <strong>${worker.full_name}${isAdmin && userAccount ? ` <span style="color: var(--text-secondary); font-size: 12px;">(${userAccount})</span>` : ''}</strong><br>
-                                        <small>${worker.personnel_number} - Пенсионер${isDead ? ' ⚠️ УМЕР' : ''}</small>
+                                        <small>${worker.personnel_number} - Пенсионер${isDead ? ' УМЕР' : ''}</small>
                                     </div>
                                 `;
                             }).join('');
@@ -4204,7 +4222,7 @@
                                 </div>
                                 ${data.worker.is_dead === 'Да' ? `
                                 <div class="detail-item">
-                                    <span class="detail-label error-label">⚠️ Пенсионер мертв:</span>
+                                    <span class="detail-label error-label">Пенсионер мертв:</span>
                                     <span class="detail-value error-value">${data.worker.is_dead}</span>
                                 </div>
                                 ` : ''}
@@ -4276,7 +4294,7 @@
                                 </button>
                                 ` : ''}
                                 <button class="btn btn-primary" onclick="downloadFuneralRequest(${data.id})">
-                                    📄 Скачать в Word
+                                    Скачать в Word
                                 </button>
                             </div>
                         </div>
@@ -4639,11 +4657,11 @@
                             <div class="compensation-actions">
                                 ${isAdmin ? `
                                 <button class="btn btn-secondary" onclick="downloadCoalCompensationIssueLedgerExcel(${periodStart ? `'${periodStart}'` : 'null'})">
-                                    📄 Ведомость на выдачу
+                                    Ведомость на выдачу
                                 </button>
                                 ` : ''}
                                 <button class="btn btn-primary" onclick="downloadCoalCompensationExcel(${periodStart ? `'${periodStart}'` : 'null'})">
-                                    📥 Скачать в Excel
+                                    Скачать в Excel
                                 </button>
                             </div>
                         </div>
@@ -4830,7 +4848,7 @@
                             </div>
                             <div class="compensation-actions">
                                 <button class="btn btn-primary" onclick="downloadBonusPaymentExcel(${periodStart ? `'${periodStart}'` : 'null'})">
-                                    📥 Скачать в Excel
+                                    Скачать в Excel
                                 </button>
                             </div>
                         </div>
@@ -4965,7 +4983,7 @@
                             </div>
                             <div class="compensation-actions">
                                 <button class="btn btn-primary" onclick="downloadFuneralServicesExcel(${periodStart ? `'${periodStart}'` : 'null'})">
-                                    📥 Скачать в Excel
+                                    Скачать в Excel
                                 </button>
                             </div>
                         </div>
@@ -5094,11 +5112,11 @@
                             <div class="compensation-actions">
                                 ${isAdmin ? `
                                 <button class="btn btn-secondary" onclick="downloadPensionerMaterialAssistanceIssueLedgerExcel(${periodStart ? `'${periodStart}'` : 'null'})">
-                                    📄 Ведомость на выдачу
+                                    Ведомость на выдачу
                                 </button>
                                 ` : ''}
                                 <button class="btn btn-primary" onclick="downloadPensionerMaterialAssistanceExcel(${periodStart ? `'${periodStart}'` : 'null'})">
-                                    📥 Скачать в Excel
+                                    Скачать в Excel
                                 </button>
                             </div>
                         </div>
@@ -5252,7 +5270,7 @@
                             </div>
                             <div class="compensation-actions">
                                 <button class="btn btn-primary" onclick="downloadMaterialAssistanceRegistryExcel(${periodStart ? `'${periodStart}'` : 'null'})">
-                                    📥 Скачать в Excel
+                                    Скачать в Excel
                                 </button>
                             </div>
                         </div>
@@ -5587,5 +5605,3 @@
     }
 </script>
 {% endblock %}
-
-

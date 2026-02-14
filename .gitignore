@@ -34,6 +34,10 @@ db.sqlite3-journal
 .DS_Store
 Thumbs.db
 
+# Frontend
+frontend/node_modules/
+frontend/.vite/
+
 # Word temporary files
 ~$*.docx
 ~$*.doc
@@ -42,4 +46,3 @@ Thumbs.db
 
 # Excel files with workers data (optional - раскомментируйте если не хотите загружать файлы в репозиторий)
 # работники/
-

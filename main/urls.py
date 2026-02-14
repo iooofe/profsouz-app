@@ -1,12 +1,38 @@
 from django.urls import path
 from . import views
+from . import spa_api
 
 app_name = 'main'
 
 urlpatterns = [
-    path('', views.index, name='index'),
-    path('login/', views.login_view, name='login'),
-    path('logout/', views.logout_view, name='logout'),
+    # SPA entrypoints
+    path('', spa_api.spa_entry, name='index'),
+    path('login/', spa_api.spa_entry, name='login'),
+    path('app/', spa_api.spa_entry, name='app_root'),
+    path('app/<path:path>/', spa_api.spa_entry, name='app_entry'),
+
+    # SPA API v2
+    path('api/v2/auth/bootstrap/', spa_api.api_auth_bootstrap, name='api_v2_auth_bootstrap'),
+    path('api/v2/auth/login/', spa_api.api_auth_login, name='api_v2_auth_login'),
+    path('api/v2/auth/logout/', spa_api.api_auth_logout, name='api_v2_auth_logout'),
+    path('api/v2/auth/me/', spa_api.api_auth_me, name='api_v2_auth_me'),
+    path('api/v2/reference/', spa_api.api_reference_data, name='api_v2_reference'),
+    path('api/v2/dashboard/', spa_api.api_dashboard, name='api_v2_dashboard'),
+    path('api/v2/workers/', spa_api.api_workers, name='api_v2_workers'),
+    path('api/v2/workers/<int:worker_id>/', spa_api.api_worker_detail, name='api_v2_worker_detail'),
+    path('api/v2/applications/vacation/', spa_api.api_vacation_requests, name='api_v2_vacation_requests'),
+    path('api/v2/applications/vacation/create/', spa_api.api_create_vacation_request, name='api_v2_create_vacation_request'),
+    path('api/v2/applications/material/', spa_api.api_material_requests, name='api_v2_material_requests'),
+    path('api/v2/applications/material/create/', spa_api.api_create_material_request, name='api_v2_create_material_request'),
+    path('api/v2/applications/coal/', spa_api.api_coal_requests, name='api_v2_coal_requests'),
+    path('api/v2/applications/coal/create/', spa_api.api_create_coal_request, name='api_v2_create_coal_request'),
+    path('api/v2/applications/funeral/', spa_api.api_funeral_requests, name='api_v2_funeral_requests'),
+    path('api/v2/applications/funeral/create/', spa_api.api_create_funeral_request, name='api_v2_create_funeral_request'),
+    path('api/v2/vacation-limits/', spa_api.api_vacation_limits, name='api_v2_vacation_limits'),
+    path('api/v2/reports/', spa_api.api_reports, name='api_v2_reports'),
+    path('api/v2/statements/', spa_api.api_statements, name='api_v2_statements'),
+
+    # Existing API and document endpoints (legacy-compatible)
     path('worker/<int:worker_id>/', views.worker_detail, name='worker_detail'),
     path('worker/<int:worker_id>/edit/', views.worker_edit, name='worker_edit'),
     path('worker/<int:worker_id>/delete/', views.worker_delete, name='worker_delete'),
@@ -57,4 +83,3 @@ urlpatterns = [
     path('api/vacation-request/<int:request_id>/delete/', views.delete_vacation_request, name='delete_vacation_request'),
     path('api/coal-request/<int:request_id>/delete/', views.delete_coal_request, name='delete_coal_request'),
 ]
-

@@ -2,7 +2,9 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.db import transaction
 from django.db.models import Q
+from django.core.paginator import Paginator
 from django.http import JsonResponse, HttpResponse, FileResponse
 import os
 from django.urls import reverse
@@ -19,6 +21,13 @@ from io import BytesIO
 from urllib.parse import quote
 from .forms import LoginForm, WorkerForm, FamilyMemberForm, VacationRequestForm, MaterialAssistanceRequestForm, CoalRequestForm, FuneralRequestForm
 from .models import Worker, FamilyMember, VacationRequest, VacationLimit, Statement, MaterialAssistanceRequest, CoalRequest, FuneralRequest
+
+EXCEL_HEADER_COLOR = "1F4F8F"
+EXCEL_STATUS_ACTIVE_COLOR = "2D7D4A"
+EXCEL_STATUS_CLOSED_COLOR = "6E7888"
+EXCEL_TOTAL_FILL_COLOR = "F0F4FA"
+EXCEL_BORDER_COLOR = "D8DEE8"
+EXCEL_CURRENCY_FORMAT = '#,##0.00'
 
 
 def is_admin(user):
@@ -44,6 +53,13 @@ def transliterate_filename(filename):
     for char in filename:
         result += translit_map.get(char, char)
     return result
+
+
+def safe_excel_sheet_title(title):
+    """Безопасный заголовок листа Excel (ограничение 31 символ и запрещенные знаки)."""
+    invalid_chars = {'\\', '/', '*', '?', ':', '[', ']'}
+    clean_title = ''.join('_' if ch in invalid_chars else ch for ch in title)
+    return clean_title[:31] or "Sheet1"
 
 
 def login_view(request):
@@ -160,6 +176,12 @@ def index(request):
                 search_lower in (worker.phone or '').lower()):
                 workers_filtered.append(worker.id)
         workers = workers.filter(id__in=workers_filtered)
+
+    # Пагинация списка работников для ускорения рендера страницы
+    workers_count = workers.count()
+    workers_paginator = Paginator(workers, 100)
+    workers_page = workers_paginator.get_page(request.GET.get('page', 1))
+    workers = workers_page.object_list
     
     worker_form = WorkerForm()
     
@@ -348,9 +370,27 @@ def index(request):
             'worker_id': vacation.worker.id,  # ID работника для перехода к карточке
             'user_account': vacation.user.username if user_is_admin else None,  # Аккаунт для админа
         })
+
+    # Для админа нет модели ведомости, поэтому показываем вычисляемый статус периода
+    if user_is_admin:
+        today = timezone.now().date()
+        is_current_period = period_start <= today <= period_end
+        statement_status = 'active' if is_current_period else 'closed'
+        statement_status_display = 'Ведется' if is_current_period else 'Закрыт'
+        zhartas_statement_status = statement_status
+        zhartas_statement_status_display = statement_status_display
+        shakhter_statement_status = statement_status
+        shakhter_statement_status_display = statement_status_display
+    else:
+        zhartas_statement_status = zhartas_statement.status
+        zhartas_statement_status_display = zhartas_statement.get_status_display()
+        shakhter_statement_status = shakhter_statement.status
+        shakhter_statement_status_display = shakhter_statement.get_status_display()
     
     context = {
         'workers': workers,
+        'workers_count': workers_count,
+        'workers_page': workers_page,
         'all_workers_count': all_workers.count(),
         'search_query': search_query,
         'worker_form': worker_form,
@@ -376,6 +416,10 @@ def index(request):
         'shakhter_statement_total_sum': shakhter_total_sum,
         'shakhter_statement': shakhter_statement,
         'all_shakhter_statements': all_shakhter_statements,
+        'zhartas_statement_status': zhartas_statement_status,
+        'zhartas_statement_status_display': zhartas_statement_status_display,
+        'shakhter_statement_status': shakhter_statement_status,
+        'shakhter_statement_status_display': shakhter_statement_status_display,
         'statement_period_start': period_start,
         'statement_period_end': period_end,
     }
@@ -455,13 +499,17 @@ def worker_edit(request, worker_id):
     if request.method == 'POST':
         worker_form = WorkerForm(request.POST, request.FILES, instance=worker)
         if worker_form.is_valid():
-            worker_form.save()
-            
-            # Удаляем всех существующих членов семьи
-            worker.family_members.all().delete()
-            
-            # Обработка членов семьи
-            family_count = int(request.POST.get('family_count', 0))
+            # Валидируем все записи членов семьи перед сохранением,
+            # чтобы не удалить существующие данные при частично невалидном вводе.
+            family_count_raw = request.POST.get('family_count', 0)
+            try:
+                family_count = max(int(family_count_raw), 0)
+            except (TypeError, ValueError):
+                family_count = 0
+
+            valid_family_forms = []
+            invalid_family_forms = []
+
             for i in range(family_count):
                 family_full_name = request.POST.get(f'family_{i}_full_name', '').strip()
                 if family_full_name:
@@ -474,12 +522,28 @@ def worker_edit(request, worker_id):
                         'birth_date': request.POST.get(f'family_{i}_birth_date', '') or None,
                     })
                     if family_form.is_valid():
+                        valid_family_forms.append(family_form)
+                    else:
+                        invalid_family_forms.append((i + 1, family_form))
+
+            if invalid_family_forms:
+                for member_number, family_form in invalid_family_forms:
+                    for field_name, errors in family_form.errors.items():
+                        field_label = family_form.fields[field_name].label if field_name in family_form.fields else field_name
+                        for error in errors:
+                            messages.error(request, f'Член семьи #{member_number}: {field_label} - {error}')
+                messages.error(request, 'Исправьте ошибки в данных членов семьи и повторите сохранение.')
+            else:
+                with transaction.atomic():
+                    worker = worker_form.save()
+                    worker.family_members.all().delete()
+                    for family_form in valid_family_forms:
                         family_member = family_form.save(commit=False)
                         family_member.worker = worker
                         family_member.save()
-            
-            messages.success(request, f'Работник {worker.full_name} успешно обновлен!')
-            return redirect(f"{reverse('main:index')}?tab=workers")
+
+                messages.success(request, f'Работник {worker.full_name} успешно обновлен!')
+                return redirect(f"{reverse('main:index')}?tab=workers")
     else:
         worker_form = WorkerForm(instance=worker)
     
@@ -1499,17 +1563,19 @@ def generate_zhartas_statement_excel(request):
     # Создаем Excel файл
     wb = Workbook()
     ws = wb.active
-    ws.title = f"Ведомость Жартас {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
+    ws.title = safe_excel_sheet_title(
+        f"Ведомость Жартас {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
+    )
     
     # Стили - улучшенные
-    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_fill = PatternFill(start_color=EXCEL_HEADER_COLOR, end_color=EXCEL_HEADER_COLOR, fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=12, name='Arial')
     title_font = Font(bold=True, size=18, color="FFFFFF", name='Arial')
     border_style = Border(
-        left=Side(style='thin', color='000000'),
-        right=Side(style='thin', color='000000'),
-        top=Side(style='thin', color='000000'),
-        bottom=Side(style='thin', color='000000')
+        left=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        right=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        top=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        bottom=Side(style='thin', color=EXCEL_BORDER_COLOR)
     )
     center_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     right_alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
@@ -1528,7 +1594,10 @@ def generate_zhartas_statement_excel(request):
     ws.row_dimensions[1].height = 35
     
     # Заголовки таблицы
-    headers = ['Порядковый номер', 'ФИО', 'Табельный номер', 'Количество путевок', 'Койка/дней', 'Сумма путевки']
+    if user_is_admin:
+        headers = ['Порядковый номер', 'Аккаунт', 'ФИО', 'Табельный номер', 'Количество путевок', 'Койка/дней', 'Сумма путевки']
+    else:
+        headers = ['Порядковый номер', 'ФИО', 'Табельный номер', 'Количество путевок', 'Койка/дней', 'Сумма путевки']
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=3, column=col_num)
         cell.value = header
@@ -1569,6 +1638,7 @@ def generate_zhartas_statement_excel(request):
         # Сумма путевки
         price = float(vacation.price) if vacation.price else 0
         ws.cell(row=row_num, column=6 + col_offset, value=price).alignment = right_alignment
+        ws.cell(row=row_num, column=6 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
         total_sum += price
         
         # Применяем границы
@@ -1579,7 +1649,7 @@ def generate_zhartas_statement_excel(request):
         row_num += 1
     
     # Итоговая строка
-    total_fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+    total_fill = PatternFill(start_color=EXCEL_TOTAL_FILL_COLOR, end_color=EXCEL_TOTAL_FILL_COLOR, fill_type="solid")
     total_font = Font(bold=True, size=12, name='Arial')
     
     if user_is_admin:
@@ -1600,6 +1670,7 @@ def generate_zhartas_statement_excel(request):
     total_sum_cell.value = total_sum
     total_sum_cell.font = total_font
     total_sum_cell.alignment = right_alignment
+    total_sum_cell.number_format = EXCEL_CURRENCY_FORMAT
     total_sum_cell.border = border_style
     total_sum_cell.fill = total_fill
     
@@ -1611,12 +1682,25 @@ def generate_zhartas_statement_excel(request):
             ws.cell(row=row_num, column=col).fill = total_fill
     
     # Настройка ширины колонок
-    ws.column_dimensions['A'].width = 18
-    ws.column_dimensions['B'].width = 30
-    ws.column_dimensions['C'].width = 18
-    ws.column_dimensions['D'].width = 20
-    ws.column_dimensions['E'].width = 15
-    ws.column_dimensions['F'].width = 18
+    if user_is_admin:
+        ws.column_dimensions['A'].width = 18
+        ws.column_dimensions['B'].width = 20
+        ws.column_dimensions['C'].width = 30
+        ws.column_dimensions['D'].width = 18
+        ws.column_dimensions['E'].width = 20
+        ws.column_dimensions['F'].width = 15
+        ws.column_dimensions['G'].width = 18
+    else:
+        ws.column_dimensions['A'].width = 18
+        ws.column_dimensions['B'].width = 30
+        ws.column_dimensions['C'].width = 18
+        ws.column_dimensions['D'].width = 20
+        ws.column_dimensions['E'].width = 15
+        ws.column_dimensions['F'].width = 18
+
+    max_col = 7 if user_is_admin else 6
+    ws.auto_filter.ref = f"A3:{get_column_letter(max_col)}{max(row_num - 1, 3)}"
+    ws.freeze_panes = 'A4'
     
     # Сохраняем в BytesIO
     buffer = BytesIO()
@@ -1679,17 +1763,19 @@ def generate_shakhter_statement_excel(request):
     # Создаем Excel файл
     wb = Workbook()
     ws = wb.active
-    ws.title = f"Ведомость Шахтер {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
+    ws.title = safe_excel_sheet_title(
+        f"Ведомость Шахтер {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
+    )
     
     # Стили - улучшенные
-    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_fill = PatternFill(start_color=EXCEL_HEADER_COLOR, end_color=EXCEL_HEADER_COLOR, fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=12, name='Arial')
     title_font = Font(bold=True, size=18, color="FFFFFF", name='Arial')
     border_style = Border(
-        left=Side(style='thin', color='000000'),
-        right=Side(style='thin', color='000000'),
-        top=Side(style='thin', color='000000'),
-        bottom=Side(style='thin', color='000000')
+        left=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        right=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        top=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        bottom=Side(style='thin', color=EXCEL_BORDER_COLOR)
     )
     center_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     right_alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
@@ -1753,6 +1839,7 @@ def generate_shakhter_statement_excel(request):
         # Сумма путевки
         price = float(vacation.price) if vacation.price else 0
         ws.cell(row=row_num, column=6 + col_offset, value=price).alignment = right_alignment
+        ws.cell(row=row_num, column=6 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
         total_sum += price
         
         # Применяем границы
@@ -1763,7 +1850,7 @@ def generate_shakhter_statement_excel(request):
         row_num += 1
     
     # Итоговая строка
-    total_fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+    total_fill = PatternFill(start_color=EXCEL_TOTAL_FILL_COLOR, end_color=EXCEL_TOTAL_FILL_COLOR, fill_type="solid")
     total_font = Font(bold=True, size=12, name='Arial')
     
     if user_is_admin:
@@ -1786,6 +1873,7 @@ def generate_shakhter_statement_excel(request):
     total_sum_cell.value = total_sum
     total_sum_cell.font = total_font
     total_sum_cell.alignment = right_alignment
+    total_sum_cell.number_format = EXCEL_CURRENCY_FORMAT
     total_sum_cell.border = border_style
     total_sum_cell.fill = total_fill
     
@@ -1811,6 +1899,9 @@ def generate_shakhter_statement_excel(request):
         ws.column_dimensions['D'].width = 20
         ws.column_dimensions['E'].width = 15
         ws.column_dimensions['F'].width = 18
+
+    ws.auto_filter.ref = f"A3:{get_column_letter(max_col)}{max(row_num - 1, 3)}"
+    ws.freeze_panes = 'A4'
     
     # Сохраняем в BytesIO
     buffer = BytesIO()
@@ -2504,11 +2595,11 @@ def coal_request_detail(request, request_id):
             pensioner_id_file_url = None
             pensioner_id_file_name = None
     
-    # Определяем отображаемый счет: для текущего счета показываем только текст
+    # Определяем отображаемый счет
     if coal_request.account_type == '20_digit':
         display_account_number = coal_request.account_number or coal_request.worker.account_20_digit or '—'
     else:
-        display_account_number = 'Текущий счет'
+        display_account_number = coal_request.account_number or coal_request.worker.current_account or '—'
 
     data = {
         'id': coal_request.id,
@@ -2687,7 +2778,7 @@ def create_funeral_request(request):
                 funeral_request.save()
             
             messages.success(request, f'Заявление на погребение для {worker.full_name} успешно создано!')
-            messages.warning(request, '⚠️ ВНИМАНИЕ: Пенсионер помечен как умерший!')
+            messages.warning(request, 'ВНИМАНИЕ: Пенсионер помечен как умерший!')
             # Переходим на вкладку отчетов и передаем параметры для автозагрузки файла
             return redirect(f"{reverse('main:index')}?tab=reports&auto_download=funeral&request_id={funeral_request.id}")
             
@@ -2938,7 +3029,7 @@ def coal_compensation_list(request):
         if coal_request.account_type == '20_digit':
             account_number = coal_request.account_number or worker.account_20_digit or ''
         else:
-            account_number = 'Текущий счет'
+            account_number = coal_request.account_number or worker.current_account or ''
         
         # Получаем льготы (если у пенсионера есть льготы, указываем название)
         # Для умерших пенсионеров не показываем льготы
@@ -2987,8 +3078,8 @@ def coal_compensation_list(request):
     # Определяем статус списка
     today = timezone.now().date()
     if today >= period_start and today <= period_end:
-        status = 'active'  # Введется
-        status_display = 'Введется'
+        status = 'active'  # Ведется
+        status_display = 'Ведется'
     else:
         status = 'closed'  # Закрыт
         status_display = 'Закрыт'
@@ -3058,17 +3149,19 @@ def generate_coal_compensation_excel(request):
     # Создаем Excel файл
     wb = Workbook()
     ws = wb.active
-    ws.title = f"Список компенсации {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
+    ws.title = safe_excel_sheet_title(
+        f"Список компенсации {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
+    )
     
     # Стили - улучшенные
-    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_fill = PatternFill(start_color=EXCEL_HEADER_COLOR, end_color=EXCEL_HEADER_COLOR, fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=12, name='Arial')
     title_font = Font(bold=True, size=18, color="FFFFFF", name='Arial')
     border_style = Border(
-        left=Side(style='thin', color='000000'),
-        right=Side(style='thin', color='000000'),
-        top=Side(style='thin', color='000000'),
-        bottom=Side(style='thin', color='000000')
+        left=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        right=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        top=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        bottom=Side(style='thin', color=EXCEL_BORDER_COLOR)
     )
     center_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     left_alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
@@ -3102,11 +3195,11 @@ def generate_coal_compensation_excel(request):
     # Статус
     today = timezone.now().date()
     if today >= period_start and today <= period_end:
-        status_text = 'Статус: Введется'
-        status_fill = PatternFill(start_color="34C759", end_color="34C759", fill_type="solid")
+        status_text = 'Статус: Ведется'
+        status_fill = PatternFill(start_color=EXCEL_STATUS_ACTIVE_COLOR, end_color=EXCEL_STATUS_ACTIVE_COLOR, fill_type="solid")
     else:
         status_text = 'Статус: Закрыт'
-        status_fill = PatternFill(start_color="8E8E93", end_color="8E8E93", fill_type="solid")
+        status_fill = PatternFill(start_color=EXCEL_STATUS_CLOSED_COLOR, end_color=EXCEL_STATUS_CLOSED_COLOR, fill_type="solid")
     
     if user_is_admin:
         ws.merge_cells('A3:J3')
@@ -3162,7 +3255,7 @@ def generate_coal_compensation_excel(request):
         if coal_request.account_type == '20_digit':
             account_number = coal_request.account_number or worker.account_20_digit or ''
         else:
-            account_number = 'Текущий счет'
+            account_number = coal_request.account_number or worker.current_account or ''
         ws.cell(row=row_num, column=4 + col_offset, value=account_number).alignment = left_alignment
         
         # Банк (всегда Народный Банк)
@@ -3177,14 +3270,17 @@ def generate_coal_compensation_excel(request):
         # Начислено
         accrued_value = coal_request.accrued if coal_request.accrued else ''
         ws.cell(row=row_num, column=7 + col_offset, value=accrued_value).alignment = right_alignment
+        ws.cell(row=row_num, column=7 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
         
         # ИПН
         ipn_value = coal_request.ipn if coal_request.ipn else ''
         ws.cell(row=row_num, column=8 + col_offset, value=ipn_value).alignment = right_alignment
+        ws.cell(row=row_num, column=8 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
         
         # К выплате
         to_pay_value = coal_request.to_pay if coal_request.to_pay else ''
         ws.cell(row=row_num, column=9 + col_offset, value=to_pay_value).alignment = right_alignment
+        ws.cell(row=row_num, column=9 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
         
         # Применяем границы
         max_col = 10 if user_is_admin else 9
@@ -3198,7 +3294,7 @@ def generate_coal_compensation_excel(request):
     total_ipn = sum(float(cr.ipn) if cr.ipn else 0 for cr in coal_requests)
     total_to_pay = sum(float(cr.to_pay) if cr.to_pay else 0 for cr in coal_requests)
     
-    total_fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+    total_fill = PatternFill(start_color=EXCEL_TOTAL_FILL_COLOR, end_color=EXCEL_TOTAL_FILL_COLOR, fill_type="solid")
     total_font = Font(bold=True, size=12, name='Arial')
     
     ws.cell(row=row_num, column=1, value='ИТОГО:').font = total_font
@@ -3207,18 +3303,24 @@ def generate_coal_compensation_excel(request):
         ws.merge_cells(f'A{row_num}:G{row_num}')
         ws.cell(row=row_num, column=8, value=total_accrued).font = total_font
         ws.cell(row=row_num, column=8).alignment = right_alignment
+        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
         ws.cell(row=row_num, column=9, value=total_ipn).font = total_font
         ws.cell(row=row_num, column=9).alignment = right_alignment
+        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
         ws.cell(row=row_num, column=10, value=total_to_pay).font = total_font
         ws.cell(row=row_num, column=10).alignment = right_alignment
+        ws.cell(row=row_num, column=10).number_format = EXCEL_CURRENCY_FORMAT
     else:
         ws.merge_cells(f'A{row_num}:F{row_num}')
         ws.cell(row=row_num, column=7, value=total_accrued).font = total_font
         ws.cell(row=row_num, column=7).alignment = right_alignment
+        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
         ws.cell(row=row_num, column=8, value=total_ipn).font = total_font
         ws.cell(row=row_num, column=8).alignment = right_alignment
+        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
         ws.cell(row=row_num, column=9, value=total_to_pay).font = total_font
         ws.cell(row=row_num, column=9).alignment = right_alignment
+        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
     
     max_col = 10 if user_is_admin else 9
     for col in range(1, max_col + 1):
@@ -3251,7 +3353,13 @@ def generate_coal_compensation_excel(request):
     # Высота строк
     ws.row_dimensions[1].height = 30
     ws.row_dimensions[2].height = 25
-    ws.row_dimensions[4].height = 30
+    ws.row_dimensions[3].height = 25
+    ws.row_dimensions[4].height = 6
+    ws.row_dimensions[5].height = 30
+
+    max_col = 10 if user_is_admin else 9
+    ws.auto_filter.ref = f"A5:{get_column_letter(max_col)}{max(row_num - 1, 5)}"
+    ws.freeze_panes = 'A6'
     
     # Сохраняем в BytesIO
     buffer = BytesIO()
@@ -3345,7 +3453,7 @@ def bonus_payment_list(request):
             if coal_request.account_type == '20_digit':
                 account_number = coal_request.account_number or worker.account_20_digit or ''
             else:
-                account_number = 'Текущий счет'
+                account_number = coal_request.account_number or worker.current_account or ''
         else:
             # Проверяем заявления на погребение (хотя для живых их не должно быть)
             if user_is_admin:
@@ -3357,10 +3465,10 @@ def bonus_payment_list(request):
                 if funeral_request.account_type == '20_digit':
                     account_number = funeral_request.account_number or ''
                 else:
-                    account_number = 'Текущий счет'
+                    account_number = funeral_request.account_number or worker.current_account or ''
             else:
                 # Используем account_20_digit из карточки работника
-                account_number = worker.account_20_digit or 'Текущий счет'
+                account_number = worker.account_20_digit or worker.current_account or ''
         
         # Получаем льготы (если у пенсионера есть льготы, указываем название)
         # Для умерших пенсионеров не показываем льготы
@@ -3429,8 +3537,8 @@ def bonus_payment_list(request):
     # Определяем статус списка
     today = timezone.now().date()
     if today >= period_start and today <= period_end:
-        status = 'active'  # Введется
-        status_display = 'Введется'
+        status = 'active'  # Ведется
+        status_display = 'Ведется'
     else:
         status = 'closed'  # Закрыт
         status_display = 'Закрыт'
@@ -3507,17 +3615,19 @@ def generate_bonus_payment_excel(request):
     # Создаем Excel файл
     wb = Workbook()
     ws = wb.active
-    ws.title = f"Список на доплату {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
+    ws.title = safe_excel_sheet_title(
+        f"Список на доплату {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
+    )
     
     # Стили - улучшенные
-    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_fill = PatternFill(start_color=EXCEL_HEADER_COLOR, end_color=EXCEL_HEADER_COLOR, fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=12, name='Arial')
     title_font = Font(bold=True, size=18, color="FFFFFF", name='Arial')
     border_style = Border(
-        left=Side(style='thin', color='000000'),
-        right=Side(style='thin', color='000000'),
-        top=Side(style='thin', color='000000'),
-        bottom=Side(style='thin', color='000000')
+        left=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        right=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        top=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        bottom=Side(style='thin', color=EXCEL_BORDER_COLOR)
     )
     center_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     left_alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
@@ -3551,11 +3661,11 @@ def generate_bonus_payment_excel(request):
     # Статус
     today = timezone.now().date()
     if today >= period_start and today <= period_end:
-        status_text = 'Статус: Введется'
-        status_fill = PatternFill(start_color="34C759", end_color="34C759", fill_type="solid")
+        status_text = 'Статус: Ведется'
+        status_fill = PatternFill(start_color=EXCEL_STATUS_ACTIVE_COLOR, end_color=EXCEL_STATUS_ACTIVE_COLOR, fill_type="solid")
     else:
         status_text = 'Статус: Закрыт'
-        status_fill = PatternFill(start_color="8E8E93", end_color="8E8E93", fill_type="solid")
+        status_fill = PatternFill(start_color=EXCEL_STATUS_CLOSED_COLOR, end_color=EXCEL_STATUS_CLOSED_COLOR, fill_type="solid")
     
     if user_is_admin:
         ws.merge_cells('A3:J3')
@@ -3592,29 +3702,29 @@ def generate_bonus_payment_excel(request):
     for worker in workers:
         # Получаем счет карты
         account_number = ''
-        coal_request = CoalRequest.objects.filter(
-            user=request.user,
-            worker=worker
-        ).order_by('-created_at').first()
+        if user_is_admin:
+            coal_request = CoalRequest.objects.filter(worker=worker).order_by('-created_at').first()
+        else:
+            coal_request = CoalRequest.objects.filter(worker__user=request.user, worker=worker).order_by('-created_at').first()
         
         if coal_request:
             if coal_request.account_type == '20_digit':
                 account_number = coal_request.account_number or worker.account_20_digit or ''
             else:
-                account_number = 'Текущий счет'
+                account_number = coal_request.account_number or worker.current_account or ''
         else:
-            funeral_request = FuneralRequest.objects.filter(
-                user=request.user,
-                worker=worker
-            ).order_by('-created_at').first()
+            if user_is_admin:
+                funeral_request = FuneralRequest.objects.filter(worker=worker).order_by('-created_at').first()
+            else:
+                funeral_request = FuneralRequest.objects.filter(worker__user=request.user, worker=worker).order_by('-created_at').first()
             
             if funeral_request:
                 if funeral_request.account_type == '20_digit':
                     account_number = funeral_request.account_number or ''
                 else:
-                    account_number = 'Текущий счет'
+                    account_number = funeral_request.account_number or worker.current_account or ''
             else:
-                account_number = worker.account_20_digit or 'Текущий счет'
+                account_number = worker.account_20_digit or worker.current_account or ''
         
         # Проверяем, есть ли данные для текущего периода
         bonus_accrued = None
@@ -3655,14 +3765,17 @@ def generate_bonus_payment_excel(request):
         # Начислено
         accrued_value = bonus_accrued if bonus_accrued else ''
         ws.cell(row=row_num, column=7 + col_offset, value=accrued_value).alignment = right_alignment
+        ws.cell(row=row_num, column=7 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
         
         # ИПН
         ipn_value = bonus_ipn if bonus_ipn else ''
         ws.cell(row=row_num, column=8 + col_offset, value=ipn_value).alignment = right_alignment
+        ws.cell(row=row_num, column=8 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
         
         # К выплате
         to_pay_value = bonus_to_pay if bonus_to_pay else ''
         ws.cell(row=row_num, column=9 + col_offset, value=to_pay_value).alignment = right_alignment
+        ws.cell(row=row_num, column=9 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
         
         # Применяем границы
         max_col = 10 if user_is_admin else 9
@@ -3682,23 +3795,30 @@ def generate_bonus_payment_excel(request):
         ws.merge_cells(f'A{row_num}:G{row_num}')
         ws.cell(row=row_num, column=8, value=total_accrued).font = Font(bold=True)
         ws.cell(row=row_num, column=8).alignment = right_alignment
+        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
         ws.cell(row=row_num, column=9, value=total_ipn).font = Font(bold=True)
         ws.cell(row=row_num, column=9).alignment = right_alignment
+        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
         ws.cell(row=row_num, column=10, value=total_to_pay).font = Font(bold=True)
         ws.cell(row=row_num, column=10).alignment = right_alignment
+        ws.cell(row=row_num, column=10).number_format = EXCEL_CURRENCY_FORMAT
     else:
         ws.merge_cells(f'A{row_num}:F{row_num}')
         ws.cell(row=row_num, column=7, value=total_accrued).font = Font(bold=True)
         ws.cell(row=row_num, column=7).alignment = right_alignment
+        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
         ws.cell(row=row_num, column=8, value=total_ipn).font = Font(bold=True)
         ws.cell(row=row_num, column=8).alignment = right_alignment
+        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
         ws.cell(row=row_num, column=9, value=total_to_pay).font = Font(bold=True)
         ws.cell(row=row_num, column=9).alignment = right_alignment
-    
+        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
+
     max_col = 10 if user_is_admin else 9
+    total_fill = PatternFill(start_color=EXCEL_TOTAL_FILL_COLOR, end_color=EXCEL_TOTAL_FILL_COLOR, fill_type="solid")
     for col in range(1, max_col + 1):
         ws.cell(row=row_num, column=col).border = border_style
-        ws.cell(row=row_num, column=col).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+        ws.cell(row=row_num, column=col).fill = total_fill
     
     # Настройка ширины колонок
     ws.column_dimensions['A'].width = 8  # №
@@ -3727,6 +3847,9 @@ def generate_bonus_payment_excel(request):
     ws.row_dimensions[2].height = 25
     ws.row_dimensions[3].height = 25
     ws.row_dimensions[5].height = 30
+
+    ws.auto_filter.ref = f"A5:{get_column_letter(max_col)}{max(row_num - 1, 5)}"
+    ws.freeze_panes = 'A6'
     
     # Сохраняем в BytesIO
     buffer = BytesIO()
@@ -3787,7 +3910,7 @@ def funeral_services_list(request):
         if funeral_request.account_type == '20_digit':
             account_number = funeral_request.account_number or ''
         else:
-            account_number = 'Текущий счет'
+            account_number = funeral_request.account_number or funeral_request.worker.current_account or ''
         
         funeral_data.append({
             'number': idx,
@@ -3825,8 +3948,8 @@ def funeral_services_list(request):
     # Определяем статус списка
     today = timezone.now().date()
     if today >= period_start and today <= period_end:
-        status = 'active'  # Введется
-        status_display = 'Введется'
+        status = 'active'  # Ведется
+        status_display = 'Ведется'
     else:
         status = 'closed'  # Закрыт
         status_display = 'Закрыт'
@@ -3879,17 +4002,19 @@ def generate_funeral_services_excel(request):
     # Создаем Excel файл
     wb = Workbook()
     ws = wb.active
-    ws.title = f"Список ритуальных услуг {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
+    ws.title = safe_excel_sheet_title(
+        f"Список ритуальных услуг {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
+    )
     
     # Стили - улучшенные
-    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_fill = PatternFill(start_color=EXCEL_HEADER_COLOR, end_color=EXCEL_HEADER_COLOR, fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=12, name='Arial')
     title_font = Font(bold=True, size=18, color="FFFFFF", name='Arial')
     border_style = Border(
-        left=Side(style='thin', color='000000'),
-        right=Side(style='thin', color='000000'),
-        top=Side(style='thin', color='000000'),
-        bottom=Side(style='thin', color='000000')
+        left=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        right=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        top=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        bottom=Side(style='thin', color=EXCEL_BORDER_COLOR)
     )
     center_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     left_alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
@@ -3923,11 +4048,11 @@ def generate_funeral_services_excel(request):
     # Статус
     today = timezone.now().date()
     if today >= period_start and today <= period_end:
-        status_text = 'Статус: Введется'
-        status_fill = PatternFill(start_color="34C759", end_color="34C759", fill_type="solid")
+        status_text = 'Статус: Ведется'
+        status_fill = PatternFill(start_color=EXCEL_STATUS_ACTIVE_COLOR, end_color=EXCEL_STATUS_ACTIVE_COLOR, fill_type="solid")
     else:
         status_text = 'Статус: Закрыт'
-        status_fill = PatternFill(start_color="8E8E93", end_color="8E8E93", fill_type="solid")
+        status_fill = PatternFill(start_color=EXCEL_STATUS_CLOSED_COLOR, end_color=EXCEL_STATUS_CLOSED_COLOR, fill_type="solid")
     
     if user_is_admin:
         ws.merge_cells('A3:H3')
@@ -3967,7 +4092,7 @@ def generate_funeral_services_excel(request):
         if funeral_request.account_type == '20_digit':
             account_number = funeral_request.account_number or ''
         else:
-            account_number = 'Текущий счет'
+            account_number = funeral_request.account_number or funeral_request.worker.current_account or ''
         
         # Порядковый номер
         ws.cell(row=row_num, column=1, value=row_num - 5).alignment = center_alignment
@@ -3996,6 +4121,7 @@ def generate_funeral_services_excel(request):
         # К выплате
         to_pay_value = funeral_request.to_pay if funeral_request.to_pay else ''
         ws.cell(row=row_num, column=7 + col_offset, value=to_pay_value).alignment = right_alignment
+        ws.cell(row=row_num, column=7 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
         
         # Применяем границы
         max_col = 8 if user_is_admin else 7
@@ -4007,7 +4133,7 @@ def generate_funeral_services_excel(request):
     # Итоговая строка
     total_to_pay = sum(float(fr.to_pay) if fr.to_pay else 0 for fr in funeral_requests)
     
-    total_fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+    total_fill = PatternFill(start_color=EXCEL_TOTAL_FILL_COLOR, end_color=EXCEL_TOTAL_FILL_COLOR, fill_type="solid")
     total_font = Font(bold=True, size=12, name='Arial')
     
     ws.cell(row=row_num, column=1, value='ИТОГО:').font = total_font
@@ -4016,10 +4142,12 @@ def generate_funeral_services_excel(request):
         ws.merge_cells(f'A{row_num}:G{row_num}')
         ws.cell(row=row_num, column=8, value=total_to_pay).font = total_font
         ws.cell(row=row_num, column=8).alignment = right_alignment
+        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
     else:
         ws.merge_cells(f'A{row_num}:F{row_num}')
         ws.cell(row=row_num, column=7, value=total_to_pay).font = total_font
         ws.cell(row=row_num, column=7).alignment = right_alignment
+        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
     
     max_col = 8 if user_is_admin else 7
     for col in range(1, max_col + 1):
@@ -4044,13 +4172,15 @@ def generate_funeral_services_excel(request):
         ws.column_dimensions['E'].width = 30  # ФИО ПЕНСИОНЕРА
         ws.column_dimensions['F'].width = 18  # БАНК
         ws.column_dimensions['G'].width = 15  # К ВЫПЛАТЕ
-    ws.column_dimensions['G'].width = 15  # К ВЫПЛАТЕ
     
     # Высота строк
     ws.row_dimensions[1].height = 30
     ws.row_dimensions[2].height = 25
     ws.row_dimensions[3].height = 25
     ws.row_dimensions[5].height = 30
+
+    ws.auto_filter.ref = f"A5:{get_column_letter(max_col)}{max(row_num - 1, 5)}"
+    ws.freeze_panes = 'A6'
     
     # Сохраняем в BytesIO
     buffer = BytesIO()
@@ -4124,7 +4254,7 @@ def pensioner_material_assistance_list(request):
             if coal_request.account_type == '20_digit':
                 account_number = coal_request.account_number or worker.account_20_digit or ''
             else:
-                account_number = 'Текущий счет'
+                account_number = coal_request.account_number or worker.current_account or ''
         else:
             # Проверяем заявления на погребение
             if user_is_admin:
@@ -4136,10 +4266,10 @@ def pensioner_material_assistance_list(request):
                 if funeral_request.account_type == '20_digit':
                     account_number = funeral_request.account_number or ''
                 else:
-                    account_number = 'Текущий счет'
+                    account_number = funeral_request.account_number or worker.current_account or ''
             else:
                 # Используем account_20_digit из карточки работника
-                account_number = worker.account_20_digit or 'Текущий счет'
+                account_number = worker.account_20_digit or worker.current_account or ''
         
         # Получаем льготы (если у пенсионера есть льготы, указываем название)
         # Для умерших пенсионеров не показываем льготы
@@ -4196,8 +4326,8 @@ def pensioner_material_assistance_list(request):
     # Определяем статус списка
     today = timezone.now().date()
     if today >= period_start and today <= period_end:
-        status = 'active'  # Введется
-        status_display = 'Введется'
+        status = 'active'  # Ведется
+        status_display = 'Ведется'
     else:
         status = 'closed'  # Закрыт
         status_display = 'Закрыт'
@@ -4287,7 +4417,7 @@ def material_assistance_registry_list(request):
     today = timezone.now().date()
     if today >= period_start and today <= period_end:
         status = 'active'
-        status_display = 'Введется'
+        status_display = 'Ведется'
     else:
         status = 'closed'
         status_display = 'Закрыт'
@@ -4336,33 +4466,146 @@ def generate_material_assistance_registry_excel(request):
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
 
+    today = timezone.now().date()
+    is_active_period = period_start <= today <= period_end
+
     wb = Workbook()
     ws = wb.active
-    ws.title = "Реестр матпомощи"
+    ws.title = safe_excel_sheet_title("Реестр матпомощи")
 
     headers = ['№']
     if user_is_admin:
         headers.append('Аккаунт')
     headers += ['ФИО', 'ИИН', 'Вид помощи', 'Сумма', 'Статус', 'Дата создания', 'Выдано']
 
-    for col_num, header in enumerate(headers, 1):
-        ws.cell(row=1, column=col_num, value=header)
+    total_columns = len(headers)
+    amount_column = headers.index('Сумма') + 1
 
-    row_num = 2
+    header_fill = PatternFill(start_color=EXCEL_HEADER_COLOR, end_color=EXCEL_HEADER_COLOR, fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11, name='Arial')
+    title_font = Font(bold=True, color="FFFFFF", size=16, name='Arial')
+    border_style = Border(
+        left=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        right=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        top=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        bottom=Side(style='thin', color=EXCEL_BORDER_COLOR)
+    )
+    center_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    left_alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+    right_alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_columns)
+    ws.cell(row=1, column=1, value='РЕЕСТР МАТЕРИАЛЬНОЙ ПОМОЩИ').font = title_font
+    ws.cell(row=1, column=1).fill = header_fill
+    ws.cell(row=1, column=1).alignment = center_alignment
+    ws.cell(row=1, column=1).border = border_style
+    ws.row_dimensions[1].height = 32
+
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=total_columns)
+    ws.cell(row=2, column=1, value=f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}').font = Font(bold=True, size=11, name='Arial')
+    ws.cell(row=2, column=1).alignment = center_alignment
+    ws.cell(row=2, column=1).border = border_style
+    ws.row_dimensions[2].height = 22
+
+    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=total_columns)
+    ws.cell(row=3, column=1, value=f'Статус: {"Ведется" if is_active_period else "Закрыт"}').font = Font(bold=True, color="FFFFFF", size=11, name='Arial')
+    ws.cell(row=3, column=1).fill = PatternFill(
+        start_color=EXCEL_STATUS_ACTIVE_COLOR if is_active_period else EXCEL_STATUS_CLOSED_COLOR,
+        end_color=EXCEL_STATUS_ACTIVE_COLOR if is_active_period else EXCEL_STATUS_CLOSED_COLOR,
+        fill_type="solid",
+    )
+    ws.cell(row=3, column=1).alignment = center_alignment
+    ws.cell(row=3, column=1).border = border_style
+    ws.row_dimensions[3].height = 22
+
+    ws.row_dimensions[4].height = 6
+
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=5, column=col_num, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center_alignment
+        cell.border = border_style
+    ws.row_dimensions[5].height = 26
+
+    from decimal import Decimal
+
+    row_num = 6
+    total_amount = Decimal('0')
     for idx, req in enumerate(material_requests, 1):
         worker = req.worker
         col = 1
-        ws.cell(row=row_num, column=col, value=idx); col += 1
+        ws.cell(row=row_num, column=col, value=idx).alignment = center_alignment
+        col += 1
         if user_is_admin:
-            ws.cell(row=row_num, column=col, value=req.user.username); col += 1
-        ws.cell(row=row_num, column=col, value=worker.full_name); col += 1
-        ws.cell(row=row_num, column=col, value=worker.inn or ''); col += 1
-        ws.cell(row=row_num, column=col, value=req.get_assistance_type_display()); col += 1
-        ws.cell(row=row_num, column=col, value=float(req.amount) if req.amount is not None else None); col += 1
-        ws.cell(row=row_num, column=col, value=req.get_status_display_text()); col += 1
-        ws.cell(row=row_num, column=col, value=req.created_at.strftime('%d.%m.%Y')); col += 1
-        ws.cell(row=row_num, column=col, value='Да' if getattr(req, 'is_issued', False) else 'Нет')
+            ws.cell(row=row_num, column=col, value=req.user.username).alignment = center_alignment
+            col += 1
+        ws.cell(row=row_num, column=col, value=worker.full_name).alignment = left_alignment
+        col += 1
+        ws.cell(row=row_num, column=col, value=worker.inn or '').alignment = center_alignment
+        col += 1
+        ws.cell(row=row_num, column=col, value=req.get_assistance_type_display()).alignment = left_alignment
+        col += 1
+
+        amount_value = float(req.amount) if req.amount is not None else None
+        ws.cell(row=row_num, column=col, value=amount_value).alignment = right_alignment
+        ws.cell(row=row_num, column=col).number_format = EXCEL_CURRENCY_FORMAT
+        if req.amount is not None:
+            total_amount += req.amount
+        col += 1
+
+        ws.cell(row=row_num, column=col, value=req.get_status_display_text()).alignment = center_alignment
+        col += 1
+        ws.cell(row=row_num, column=col, value=req.created_at.strftime('%d.%m.%Y')).alignment = center_alignment
+        col += 1
+        ws.cell(row=row_num, column=col, value='Да' if getattr(req, 'is_issued', False) else 'Нет').alignment = center_alignment
+
+        for border_col in range(1, total_columns + 1):
+            ws.cell(row=row_num, column=border_col).border = border_style
         row_num += 1
+
+    ws.cell(row=row_num, column=1, value='ИТОГО:').font = Font(bold=True, size=11, name='Arial')
+    ws.cell(row=row_num, column=1).alignment = right_alignment
+    if amount_column > 1:
+        ws.merge_cells(start_row=row_num, start_column=1, end_row=row_num, end_column=amount_column - 1)
+    ws.cell(row=row_num, column=amount_column, value=float(total_amount)).font = Font(bold=True, size=11, name='Arial')
+    ws.cell(row=row_num, column=amount_column).alignment = right_alignment
+    ws.cell(row=row_num, column=amount_column).number_format = EXCEL_CURRENCY_FORMAT
+
+    for border_col in range(1, total_columns + 1):
+        cell = ws.cell(row=row_num, column=border_col)
+        cell.border = border_style
+        cell.fill = PatternFill(start_color=EXCEL_TOTAL_FILL_COLOR, end_color=EXCEL_TOTAL_FILL_COLOR, fill_type="solid")
+
+    if user_is_admin:
+        widths = {
+            'A': 8,   # №
+            'B': 16,  # Аккаунт
+            'C': 34,  # ФИО
+            'D': 16,  # ИИН
+            'E': 30,  # Вид помощи
+            'F': 16,  # Сумма
+            'G': 22,  # Статус
+            'H': 16,  # Дата создания
+            'I': 12,  # Выдано
+        }
+    else:
+        widths = {
+            'A': 8,   # №
+            'B': 34,  # ФИО
+            'C': 16,  # ИИН
+            'D': 30,  # Вид помощи
+            'E': 16,  # Сумма
+            'F': 22,  # Статус
+            'G': 16,  # Дата создания
+            'H': 12,  # Выдано
+        }
+
+    for column_letter, width in widths.items():
+        ws.column_dimensions[column_letter].width = width
+
+    ws.auto_filter.ref = f"A5:{get_column_letter(total_columns)}{max(row_num - 1, 5)}"
+    ws.freeze_panes = 'A6'
 
     buffer = BytesIO()
     wb.save(buffer)
@@ -4424,17 +4667,19 @@ def generate_pensioner_material_assistance_excel(request):
     # Создаем Excel файл
     wb = Workbook()
     ws = wb.active
-    ws.title = f"Список материальной помощи {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
+    ws.title = safe_excel_sheet_title(
+        f"Список материальной помощи {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
+    )
     
     # Стили - улучшенные
-    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_fill = PatternFill(start_color=EXCEL_HEADER_COLOR, end_color=EXCEL_HEADER_COLOR, fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=12, name='Arial')
     title_font = Font(bold=True, size=18, color="FFFFFF", name='Arial')
     border_style = Border(
-        left=Side(style='thin', color='000000'),
-        right=Side(style='thin', color='000000'),
-        top=Side(style='thin', color='000000'),
-        bottom=Side(style='thin', color='000000')
+        left=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        right=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        top=Side(style='thin', color=EXCEL_BORDER_COLOR),
+        bottom=Side(style='thin', color=EXCEL_BORDER_COLOR)
     )
     center_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     left_alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
@@ -4468,11 +4713,11 @@ def generate_pensioner_material_assistance_excel(request):
     # Статус
     today = timezone.now().date()
     if today >= period_start and today <= period_end:
-        status_text = 'Статус: Введется'
-        status_fill = PatternFill(start_color="34C759", end_color="34C759", fill_type="solid")
+        status_text = 'Статус: Ведется'
+        status_fill = PatternFill(start_color=EXCEL_STATUS_ACTIVE_COLOR, end_color=EXCEL_STATUS_ACTIVE_COLOR, fill_type="solid")
     else:
         status_text = 'Статус: Закрыт'
-        status_fill = PatternFill(start_color="8E8E93", end_color="8E8E93", fill_type="solid")
+        status_fill = PatternFill(start_color=EXCEL_STATUS_CLOSED_COLOR, end_color=EXCEL_STATUS_CLOSED_COLOR, fill_type="solid")
     
     if user_is_admin:
         ws.merge_cells('A3:J3')
@@ -4511,29 +4756,29 @@ def generate_pensioner_material_assistance_excel(request):
         
         # Получаем счет карты
         account_number = ''
-        coal_request = CoalRequest.objects.filter(
-            user=request.user,
-            worker=worker
-        ).order_by('-created_at').first()
+        if user_is_admin:
+            coal_request = CoalRequest.objects.filter(worker=worker).order_by('-created_at').first()
+        else:
+            coal_request = CoalRequest.objects.filter(worker__user=request.user, worker=worker).order_by('-created_at').first()
         
         if coal_request:
             if coal_request.account_type == '20_digit':
                 account_number = coal_request.account_number or worker.account_20_digit or ''
             else:
-                account_number = 'Текущий счет'
+                account_number = coal_request.account_number or worker.current_account or ''
         else:
-            funeral_request = FuneralRequest.objects.filter(
-                user=request.user,
-                worker=worker
-            ).order_by('-created_at').first()
+            if user_is_admin:
+                funeral_request = FuneralRequest.objects.filter(worker=worker).order_by('-created_at').first()
+            else:
+                funeral_request = FuneralRequest.objects.filter(worker__user=request.user, worker=worker).order_by('-created_at').first()
             
             if funeral_request:
                 if funeral_request.account_type == '20_digit':
                     account_number = funeral_request.account_number or ''
                 else:
-                    account_number = 'Текущий счет'
+                    account_number = funeral_request.account_number or worker.current_account or ''
             else:
-                account_number = worker.account_20_digit or 'Текущий счет'
+                account_number = worker.account_20_digit or worker.current_account or ''
         
         # Порядковый номер
         ws.cell(row=row_num, column=1, value=row_num - 5).alignment = center_alignment
@@ -4565,14 +4810,17 @@ def generate_pensioner_material_assistance_excel(request):
         # Начислено
         accrued_value = material_request.accrued if material_request.accrued else ''
         ws.cell(row=row_num, column=7 + col_offset, value=accrued_value).alignment = right_alignment
+        ws.cell(row=row_num, column=7 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
         
         # ИПН
         ipn_value = material_request.ipn if material_request.ipn else ''
         ws.cell(row=row_num, column=8 + col_offset, value=ipn_value).alignment = right_alignment
+        ws.cell(row=row_num, column=8 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
         
         # К выплате
         to_pay_value = material_request.to_pay if material_request.to_pay else ''
         ws.cell(row=row_num, column=9 + col_offset, value=to_pay_value).alignment = right_alignment
+        ws.cell(row=row_num, column=9 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
         
         # Применяем границы
         max_col = 10 if user_is_admin else 9
@@ -4592,23 +4840,30 @@ def generate_pensioner_material_assistance_excel(request):
         ws.merge_cells(f'A{row_num}:G{row_num}')
         ws.cell(row=row_num, column=8, value=total_accrued).font = Font(bold=True)
         ws.cell(row=row_num, column=8).alignment = right_alignment
+        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
         ws.cell(row=row_num, column=9, value=total_ipn).font = Font(bold=True)
         ws.cell(row=row_num, column=9).alignment = right_alignment
+        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
         ws.cell(row=row_num, column=10, value=total_to_pay).font = Font(bold=True)
         ws.cell(row=row_num, column=10).alignment = right_alignment
+        ws.cell(row=row_num, column=10).number_format = EXCEL_CURRENCY_FORMAT
     else:
         ws.merge_cells(f'A{row_num}:F{row_num}')
         ws.cell(row=row_num, column=7, value=total_accrued).font = Font(bold=True)
         ws.cell(row=row_num, column=7).alignment = right_alignment
+        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
         ws.cell(row=row_num, column=8, value=total_ipn).font = Font(bold=True)
         ws.cell(row=row_num, column=8).alignment = right_alignment
+        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
         ws.cell(row=row_num, column=9, value=total_to_pay).font = Font(bold=True)
         ws.cell(row=row_num, column=9).alignment = right_alignment
-    
+        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
+
     max_col = 10 if user_is_admin else 9
+    total_fill = PatternFill(start_color=EXCEL_TOTAL_FILL_COLOR, end_color=EXCEL_TOTAL_FILL_COLOR, fill_type="solid")
     for col in range(1, max_col + 1):
         ws.cell(row=row_num, column=col).border = border_style
-        ws.cell(row=row_num, column=col).fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+        ws.cell(row=row_num, column=col).fill = total_fill
     
     # Настройка ширины колонок
     ws.column_dimensions['A'].width = 8  # №
@@ -4637,6 +4892,9 @@ def generate_pensioner_material_assistance_excel(request):
     ws.row_dimensions[2].height = 25
     ws.row_dimensions[3].height = 25
     ws.row_dimensions[5].height = 30
+
+    ws.auto_filter.ref = f"A5:{get_column_letter(max_col)}{max(row_num - 1, 5)}"
+    ws.freeze_panes = 'A6'
     
     # Сохраняем в BytesIO
     buffer = BytesIO()
