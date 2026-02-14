@@ -1581,10 +1581,7 @@ def generate_zhartas_statement_excel(request):
     right_alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
     
     # Заголовок
-    if user_is_admin:
-        ws.merge_cells('A1:G1')
-    else:
-        ws.merge_cells('A1:F1')
+    ws.merge_cells('A1:F1')
     title_cell = ws['A1']
     title_cell.value = f'Ведомость путевок за Жартас с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}'
     title_cell.font = title_font
@@ -1594,10 +1591,7 @@ def generate_zhartas_statement_excel(request):
     ws.row_dimensions[1].height = 35
     
     # Заголовки таблицы
-    if user_is_admin:
-        headers = ['Порядковый номер', 'Аккаунт', 'ФИО', 'Табельный номер', 'Количество путевок', 'Койка/дней', 'Сумма путевки']
-    else:
-        headers = ['Порядковый номер', 'ФИО', 'Табельный номер', 'Количество путевок', 'Койка/дней', 'Сумма путевки']
+    headers = ['Порядковый номер', 'ФИО', 'Табельный номер', 'Количество путевок', 'Койка/дней', 'Сумма путевки']
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=3, column=col_num)
         cell.value = header
@@ -1611,38 +1605,32 @@ def generate_zhartas_statement_excel(request):
     total_sum = 0
     
     for vacation in vacations:
-        col_offset = 0
         # Порядковый номер
         ws.cell(row=row_num, column=1, value=row_num - 3).alignment = center_alignment
-        
-        if user_is_admin:
-            # Аккаунт
-            ws.cell(row=row_num, column=2, value=vacation.user.username).alignment = center_alignment
-            col_offset = 1
-        
+
         # ФИО
-        ws.cell(row=row_num, column=2 + col_offset, value=vacation.worker.full_name)
+        ws.cell(row=row_num, column=2, value=vacation.worker.full_name)
         
         # Табельный номер
-        ws.cell(row=row_num, column=3 + col_offset, value=vacation.worker.personnel_number).alignment = center_alignment
+        ws.cell(row=row_num, column=3, value=vacation.worker.personnel_number).alignment = center_alignment
         
         # Количество путевок (только работник, без членов семьи) - всегда 1
-        ws.cell(row=row_num, column=4 + col_offset, value=1).alignment = center_alignment
+        ws.cell(row=row_num, column=4, value=1).alignment = center_alignment
         
         # Койка/дней (количество путевок включая членов семьи * количество дней)
         people_count = vacation.get_places_count()
         days = vacation.get_duration_days()
         bed_days = people_count * days
-        ws.cell(row=row_num, column=5 + col_offset, value=bed_days).alignment = center_alignment
+        ws.cell(row=row_num, column=5, value=bed_days).alignment = center_alignment
         
         # Сумма путевки
         price = float(vacation.price) if vacation.price else 0
-        ws.cell(row=row_num, column=6 + col_offset, value=price).alignment = right_alignment
-        ws.cell(row=row_num, column=6 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=6, value=price).alignment = right_alignment
+        ws.cell(row=row_num, column=6).number_format = EXCEL_CURRENCY_FORMAT
         total_sum += price
         
         # Применяем границы
-        max_col = 7 if user_is_admin else 6
+        max_col = 6
         for col in range(1, max_col + 1):
             ws.cell(row=row_num, column=col).border = border_style
         
@@ -1652,12 +1640,8 @@ def generate_zhartas_statement_excel(request):
     total_fill = PatternFill(start_color=EXCEL_TOTAL_FILL_COLOR, end_color=EXCEL_TOTAL_FILL_COLOR, fill_type="solid")
     total_font = Font(bold=True, size=12, name='Arial')
     
-    if user_is_admin:
-        ws.merge_cells(f'A{row_num}:F{row_num}')
-        total_sum_col = 7
-    else:
-        ws.merge_cells(f'A{row_num}:E{row_num}')
-        total_sum_col = 6
+    ws.merge_cells(f'A{row_num}:E{row_num}')
+    total_sum_col = 6
     
     total_cell = ws[f'A{row_num}']
     total_cell.value = 'ИТОГО:'
@@ -1675,30 +1659,21 @@ def generate_zhartas_statement_excel(request):
     total_sum_cell.fill = total_fill
     
     # Применяем границы ко всем ячейкам итоговой строки
-    max_col = 7 if user_is_admin else 6
+    max_col = 6
     for col in range(1, max_col + 1):
         ws.cell(row=row_num, column=col).border = border_style
         if col < max_col:
             ws.cell(row=row_num, column=col).fill = total_fill
     
     # Настройка ширины колонок
-    if user_is_admin:
-        ws.column_dimensions['A'].width = 18
-        ws.column_dimensions['B'].width = 20
-        ws.column_dimensions['C'].width = 30
-        ws.column_dimensions['D'].width = 18
-        ws.column_dimensions['E'].width = 20
-        ws.column_dimensions['F'].width = 15
-        ws.column_dimensions['G'].width = 18
-    else:
-        ws.column_dimensions['A'].width = 18
-        ws.column_dimensions['B'].width = 30
-        ws.column_dimensions['C'].width = 18
-        ws.column_dimensions['D'].width = 20
-        ws.column_dimensions['E'].width = 15
-        ws.column_dimensions['F'].width = 18
+    ws.column_dimensions['A'].width = 18
+    ws.column_dimensions['B'].width = 30
+    ws.column_dimensions['C'].width = 18
+    ws.column_dimensions['D'].width = 20
+    ws.column_dimensions['E'].width = 15
+    ws.column_dimensions['F'].width = 18
 
-    max_col = 7 if user_is_admin else 6
+    max_col = 6
     ws.auto_filter.ref = f"A3:{get_column_letter(max_col)}{max(row_num - 1, 3)}"
     ws.freeze_panes = 'A4'
     
@@ -1781,10 +1756,7 @@ def generate_shakhter_statement_excel(request):
     right_alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
     
     # Заголовок
-    if user_is_admin:
-        ws.merge_cells('A1:G1')
-    else:
-        ws.merge_cells('A1:F1')
+    ws.merge_cells('A1:F1')
     title_cell = ws['A1']
     title_cell.value = f'Ведомость путевок за Шахтер с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}'
     title_cell.font = title_font
@@ -1794,10 +1766,7 @@ def generate_shakhter_statement_excel(request):
     ws.row_dimensions[1].height = 35
     
     # Заголовки таблицы
-    if user_is_admin:
-        headers = ['Порядковый номер', 'Аккаунт', 'ФИО', 'Табельный номер', 'Количество путевок', 'Койка/дней', 'Сумма путевки']
-    else:
-        headers = ['Порядковый номер', 'ФИО', 'Табельный номер', 'Количество путевок', 'Койка/дней', 'Сумма путевки']
+    headers = ['Порядковый номер', 'ФИО', 'Табельный номер', 'Количество путевок', 'Койка/дней', 'Сумма путевки']
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=3, column=col_num)
         cell.value = header
@@ -1815,35 +1784,29 @@ def generate_shakhter_statement_excel(request):
         # Порядковый номер
         ws.cell(row=row_num, column=1, value=row_num - 3).alignment = center_alignment
         
-        col_offset = 0
-        if user_is_admin:
-            # Аккаунт
-            ws.cell(row=row_num, column=2, value=vacation.user.username).alignment = center_alignment
-            col_offset = 1
-        
         # ФИО
-        ws.cell(row=row_num, column=2 + col_offset, value=vacation.worker.full_name)
+        ws.cell(row=row_num, column=2, value=vacation.worker.full_name)
         
         # Табельный номер
-        ws.cell(row=row_num, column=3 + col_offset, value=vacation.worker.personnel_number).alignment = center_alignment
+        ws.cell(row=row_num, column=3, value=vacation.worker.personnel_number).alignment = center_alignment
         
         # Количество путевок (только работник, без членов семьи) - всегда 1
-        ws.cell(row=row_num, column=4 + col_offset, value=1).alignment = center_alignment
+        ws.cell(row=row_num, column=4, value=1).alignment = center_alignment
         
         # Койка/дней (количество путевок включая членов семьи * количество дней)
         people_count = vacation.get_places_count()
         days = vacation.get_duration_days()
         bed_days = people_count * days
-        ws.cell(row=row_num, column=5 + col_offset, value=bed_days).alignment = center_alignment
+        ws.cell(row=row_num, column=5, value=bed_days).alignment = center_alignment
         
         # Сумма путевки
         price = float(vacation.price) if vacation.price else 0
-        ws.cell(row=row_num, column=6 + col_offset, value=price).alignment = right_alignment
-        ws.cell(row=row_num, column=6 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=6, value=price).alignment = right_alignment
+        ws.cell(row=row_num, column=6).number_format = EXCEL_CURRENCY_FORMAT
         total_sum += price
         
         # Применяем границы
-        max_col = 7 if user_is_admin else 6
+        max_col = 6
         for col in range(1, max_col + 1):
             ws.cell(row=row_num, column=col).border = border_style
         
@@ -1853,14 +1816,9 @@ def generate_shakhter_statement_excel(request):
     total_fill = PatternFill(start_color=EXCEL_TOTAL_FILL_COLOR, end_color=EXCEL_TOTAL_FILL_COLOR, fill_type="solid")
     total_font = Font(bold=True, size=12, name='Arial')
     
-    if user_is_admin:
-        ws.merge_cells(f'A{row_num}:F{row_num}')
-        total_sum_col = 7
-        max_col = 7
-    else:
-        ws.merge_cells(f'A{row_num}:E{row_num}')
-        total_sum_col = 6
-        max_col = 6
+    ws.merge_cells(f'A{row_num}:E{row_num}')
+    total_sum_col = 6
+    max_col = 6
     
     total_cell = ws[f'A{row_num}']
     total_cell.value = 'ИТОГО:'
@@ -1884,21 +1842,12 @@ def generate_shakhter_statement_excel(request):
             ws.cell(row=row_num, column=col).fill = total_fill
     
     # Настройка ширины колонок
-    if user_is_admin:
-        ws.column_dimensions['A'].width = 18
-        ws.column_dimensions['B'].width = 20
-        ws.column_dimensions['C'].width = 30
-        ws.column_dimensions['D'].width = 18
-        ws.column_dimensions['E'].width = 20
-        ws.column_dimensions['F'].width = 15
-        ws.column_dimensions['G'].width = 18
-    else:
-        ws.column_dimensions['A'].width = 18
-        ws.column_dimensions['B'].width = 30
-        ws.column_dimensions['C'].width = 18
-        ws.column_dimensions['D'].width = 20
-        ws.column_dimensions['E'].width = 15
-        ws.column_dimensions['F'].width = 18
+    ws.column_dimensions['A'].width = 18
+    ws.column_dimensions['B'].width = 30
+    ws.column_dimensions['C'].width = 18
+    ws.column_dimensions['D'].width = 20
+    ws.column_dimensions['E'].width = 15
+    ws.column_dimensions['F'].width = 18
 
     ws.auto_filter.ref = f"A3:{get_column_letter(max_col)}{max(row_num - 1, 3)}"
     ws.freeze_panes = 'A4'
@@ -2036,6 +1985,8 @@ def create_material_assistance_request(request):
         
         # Получаем данные из формы
         assistance_type = request.POST.get('assistance_type')
+        account_type = request.POST.get('account_type')
+        account_number = request.POST.get('account_number', '').strip()
         # Для пенсионеров может быть скрытое поле, проверяем оба варианта
         amount = request.POST.get('amount', '0')
         if not amount or amount == '':
@@ -2044,6 +1995,22 @@ def create_material_assistance_request(request):
         # Валидация данных
         if not assistance_type:
             messages.error(request, 'Не выбран вид помощи!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
+        if account_type not in dict(MaterialAssistanceRequest.ACCOUNT_TYPE_CHOICES):
+            messages.error(request, 'Некорректный тип счета!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
+        if not account_number:
+            messages.error(request, 'Не указан номер счета!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
+        if not account_number.startswith('KZ'):
+            messages.error(request, 'Номер счета должен начинаться с KZ!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
+        if len(account_number) != 20:
+            messages.error(request, 'Номер счета должен содержать KZ и 18 цифр (всего 20 символов)!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
+        digits = account_number[2:]
+        if not digits.isdigit() or len(digits) != 18:
+            messages.error(request, 'После KZ должны быть только 18 цифр!')
             return redirect(f"{reverse('main:index')}?tab=applications")
 
         # Запрет дублей и взаимоисключение для пенсионеров: уголь ↔ лекарства (на лечение)
@@ -2081,12 +2048,21 @@ def create_material_assistance_request(request):
             
             print(f"DEBUG: Создание заявления - worker_id={worker_id}, assistance_type={assistance_type}, amount={amount_decimal}")
             
-            material_assistance = MaterialAssistanceRequest.objects.create(
-                user=request.user,
-                worker=worker,
-                assistance_type=assistance_type,
-                amount=amount_decimal
-            )
+            with transaction.atomic():
+                if account_type == '20_digit':
+                    worker.account_20_digit = account_number
+                else:
+                    worker.current_account = account_number
+                worker.save()
+
+                material_assistance = MaterialAssistanceRequest.objects.create(
+                    user=request.user,
+                    worker=worker,
+                    assistance_type=assistance_type,
+                    amount=amount_decimal,
+                    account_type=account_type,
+                    account_number=account_number
+                )
             
             print(f"DEBUG: Заявление создано успешно, ID={material_assistance.id}")
             
@@ -2322,8 +2298,13 @@ def material_assistance_detail(request, request_id):
     else:
         material_assistance = get_object_or_404(MaterialAssistanceRequest, id=request_id, user=request.user)
     
-    # Генерируем предпросмотр заявления
+    # Генерируем предпросмотр заявления (для совместимости legacy-интерфейса)
     preview_html = generate_material_assistance_preview(material_assistance)
+
+    if material_assistance.account_type == '20_digit':
+        display_account_number = material_assistance.account_number or material_assistance.worker.account_20_digit or '—'
+    else:
+        display_account_number = material_assistance.account_number or material_assistance.worker.current_account or '—'
     
     data = {
         'id': material_assistance.id,
@@ -2342,6 +2323,8 @@ def material_assistance_detail(request, request_id):
         'assistance_details': {
             'assistance_type': material_assistance.get_assistance_type_display(),
             'amount': float(material_assistance.amount),
+            'account_type': material_assistance.get_account_type_display(),
+            'account_number': display_account_number,
             'status': material_assistance.get_status(),
             'status_text': material_assistance.get_status_display_text(),
         },
@@ -3168,10 +3151,7 @@ def generate_coal_compensation_excel(request):
     right_alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
     
     # Красивый заголовок
-    if user_is_admin:
-        ws.merge_cells('A1:J1')
-    else:
-        ws.merge_cells('A1:I1')
+    ws.merge_cells('A1:I1')
     title_cell = ws['A1']
     title_cell.value = f'СПИСОК КОМПЕНСАЦИИ ЗА УГОЛЬ'
     title_cell.font = title_font
@@ -3181,10 +3161,7 @@ def generate_coal_compensation_excel(request):
     ws.row_dimensions[1].height = 35
     
     # Период
-    if user_is_admin:
-        ws.merge_cells('A2:J2')
-    else:
-        ws.merge_cells('A2:I2')
+    ws.merge_cells('A2:I2')
     period_cell = ws['A2']
     period_cell.value = f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}'
     period_cell.font = Font(bold=True, size=12, name='Arial')
@@ -3201,10 +3178,7 @@ def generate_coal_compensation_excel(request):
         status_text = 'Статус: Закрыт'
         status_fill = PatternFill(start_color=EXCEL_STATUS_CLOSED_COLOR, end_color=EXCEL_STATUS_CLOSED_COLOR, fill_type="solid")
     
-    if user_is_admin:
-        ws.merge_cells('A3:J3')
-    else:
-        ws.merge_cells('A3:I3')
+    ws.merge_cells('A3:I3')
     status_cell = ws['A3']
     status_cell.value = status_text
     status_cell.font = Font(bold=True, size=12, color="FFFFFF", name='Arial')
@@ -3217,10 +3191,7 @@ def generate_coal_compensation_excel(request):
     ws.row_dimensions[4].height = 5
     
     # Заголовки таблицы
-    if user_is_admin:
-        headers = ['№', 'Аккаунт', 'ФИО', 'ИИН', 'Счет карты', 'Банк', 'Льготы', 'Начислено', 'ИПН', 'К выплате']
-    else:
-        headers = ['№', 'ФИО', 'ИИН', 'Счет карты', 'Банк', 'Льготы', 'Начислено', 'ИПН', 'К выплате']
+    headers = ['№', 'ФИО', 'ИИН', 'Счет карты', 'Банк', 'Льготы', 'Начислено', 'ИПН', 'К выплате']
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=5, column=col_num)
         cell.value = header
@@ -3239,51 +3210,45 @@ def generate_coal_compensation_excel(request):
         # Порядковый номер
         ws.cell(row=row_num, column=1, value=row_num - 5).alignment = center_alignment
         
-        col_offset = 0
-        if user_is_admin:
-            # Аккаунт
-            ws.cell(row=row_num, column=2, value=coal_request.user.username).alignment = center_alignment
-            col_offset = 1
-        
         # ФИО
-        ws.cell(row=row_num, column=2 + col_offset, value=worker.full_name).alignment = left_alignment
+        ws.cell(row=row_num, column=2, value=worker.full_name).alignment = left_alignment
         
         # ИИН
-        ws.cell(row=row_num, column=3 + col_offset, value=worker.inn or '').alignment = center_alignment
+        ws.cell(row=row_num, column=3, value=worker.inn or '').alignment = center_alignment
         
         # Счет (карточный или текущий)
         if coal_request.account_type == '20_digit':
             account_number = coal_request.account_number or worker.account_20_digit or ''
         else:
             account_number = coal_request.account_number or worker.current_account or ''
-        ws.cell(row=row_num, column=4 + col_offset, value=account_number).alignment = left_alignment
+        ws.cell(row=row_num, column=4, value=account_number).alignment = left_alignment
         
         # Банк (всегда Народный Банк)
-        ws.cell(row=row_num, column=5 + col_offset, value='Народный Банк').alignment = center_alignment
+        ws.cell(row=row_num, column=5, value='Народный Банк').alignment = center_alignment
         
         # Льготы (для умерших пенсионеров не показываем льготы)
         benefits = ''
         if not bool(worker.is_dead) and bool(worker.has_benefits) and worker.benefits_name:
             benefits = worker.benefits_name
-        ws.cell(row=row_num, column=6 + col_offset, value=benefits).alignment = left_alignment
+        ws.cell(row=row_num, column=6, value=benefits).alignment = left_alignment
         
         # Начислено
         accrued_value = coal_request.accrued if coal_request.accrued else ''
-        ws.cell(row=row_num, column=7 + col_offset, value=accrued_value).alignment = right_alignment
-        ws.cell(row=row_num, column=7 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=7, value=accrued_value).alignment = right_alignment
+        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
         
         # ИПН
         ipn_value = coal_request.ipn if coal_request.ipn else ''
-        ws.cell(row=row_num, column=8 + col_offset, value=ipn_value).alignment = right_alignment
-        ws.cell(row=row_num, column=8 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=8, value=ipn_value).alignment = right_alignment
+        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
         
         # К выплате
         to_pay_value = coal_request.to_pay if coal_request.to_pay else ''
-        ws.cell(row=row_num, column=9 + col_offset, value=to_pay_value).alignment = right_alignment
-        ws.cell(row=row_num, column=9 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=9, value=to_pay_value).alignment = right_alignment
+        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
         
         # Применяем границы
-        max_col = 10 if user_is_admin else 9
+        max_col = 9
         for col in range(1, max_col + 1):
             ws.cell(row=row_num, column=col).border = border_style
         
@@ -3299,56 +3264,32 @@ def generate_coal_compensation_excel(request):
     
     ws.cell(row=row_num, column=1, value='ИТОГО:').font = total_font
     ws.cell(row=row_num, column=1).alignment = right_alignment
-    if user_is_admin:
-        ws.merge_cells(f'A{row_num}:G{row_num}')
-        ws.cell(row=row_num, column=8, value=total_accrued).font = total_font
-        ws.cell(row=row_num, column=8).alignment = right_alignment
-        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
-        ws.cell(row=row_num, column=9, value=total_ipn).font = total_font
-        ws.cell(row=row_num, column=9).alignment = right_alignment
-        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
-        ws.cell(row=row_num, column=10, value=total_to_pay).font = total_font
-        ws.cell(row=row_num, column=10).alignment = right_alignment
-        ws.cell(row=row_num, column=10).number_format = EXCEL_CURRENCY_FORMAT
-    else:
-        ws.merge_cells(f'A{row_num}:F{row_num}')
-        ws.cell(row=row_num, column=7, value=total_accrued).font = total_font
-        ws.cell(row=row_num, column=7).alignment = right_alignment
-        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
-        ws.cell(row=row_num, column=8, value=total_ipn).font = total_font
-        ws.cell(row=row_num, column=8).alignment = right_alignment
-        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
-        ws.cell(row=row_num, column=9, value=total_to_pay).font = total_font
-        ws.cell(row=row_num, column=9).alignment = right_alignment
-        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
+    ws.merge_cells(f'A{row_num}:F{row_num}')
+    ws.cell(row=row_num, column=7, value=total_accrued).font = total_font
+    ws.cell(row=row_num, column=7).alignment = right_alignment
+    ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
+    ws.cell(row=row_num, column=8, value=total_ipn).font = total_font
+    ws.cell(row=row_num, column=8).alignment = right_alignment
+    ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
+    ws.cell(row=row_num, column=9, value=total_to_pay).font = total_font
+    ws.cell(row=row_num, column=9).alignment = right_alignment
+    ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
     
-    max_col = 10 if user_is_admin else 9
+    max_col = 9
     for col in range(1, max_col + 1):
         ws.cell(row=row_num, column=col).border = border_style
         ws.cell(row=row_num, column=col).fill = total_fill
     
     # Настройка ширины колонок
-    if user_is_admin:
-        ws.column_dimensions['A'].width = 8  # №
-        ws.column_dimensions['B'].width = 20  # Аккаунт
-        ws.column_dimensions['C'].width = 35  # ФИО
-        ws.column_dimensions['D'].width = 15  # ИИН
-        ws.column_dimensions['E'].width = 25  # Счет карты
-        ws.column_dimensions['F'].width = 18  # Банк
-        ws.column_dimensions['G'].width = 25  # Льготы
-        ws.column_dimensions['H'].width = 15  # Начислено
-        ws.column_dimensions['I'].width = 15  # ИПН
-        ws.column_dimensions['J'].width = 15  # К выплате
-    else:
-        ws.column_dimensions['A'].width = 8  # №
-        ws.column_dimensions['B'].width = 35  # ФИО
-        ws.column_dimensions['C'].width = 15  # ИИН
-        ws.column_dimensions['D'].width = 25  # Счет карты
-        ws.column_dimensions['E'].width = 18  # Банк
-        ws.column_dimensions['F'].width = 25  # Льготы
-        ws.column_dimensions['G'].width = 15  # Начислено
-        ws.column_dimensions['H'].width = 15  # ИПН
-        ws.column_dimensions['I'].width = 15  # К выплате
+    ws.column_dimensions['A'].width = 8  # №
+    ws.column_dimensions['B'].width = 35  # ФИО
+    ws.column_dimensions['C'].width = 15  # ИИН
+    ws.column_dimensions['D'].width = 25  # Счет карты
+    ws.column_dimensions['E'].width = 18  # Банк
+    ws.column_dimensions['F'].width = 25  # Льготы
+    ws.column_dimensions['G'].width = 15  # Начислено
+    ws.column_dimensions['H'].width = 15  # ИПН
+    ws.column_dimensions['I'].width = 15  # К выплате
     
     # Высота строк
     ws.row_dimensions[1].height = 30
@@ -3357,7 +3298,7 @@ def generate_coal_compensation_excel(request):
     ws.row_dimensions[4].height = 6
     ws.row_dimensions[5].height = 30
 
-    max_col = 10 if user_is_admin else 9
+    max_col = 9
     ws.auto_filter.ref = f"A5:{get_column_letter(max_col)}{max(row_num - 1, 5)}"
     ws.freeze_panes = 'A6'
     
@@ -3634,10 +3575,7 @@ def generate_bonus_payment_excel(request):
     right_alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
     
     # Красивый заголовок
-    if user_is_admin:
-        ws.merge_cells('A1:J1')
-    else:
-        ws.merge_cells('A1:I1')
+    ws.merge_cells('A1:I1')
     title_cell = ws['A1']
     title_cell.value = f'СПИСОК НА ДОПЛАТУ ЗА 3 СТЕПЕНИ К НАГРАДНЫМ ЗНАКАМ'
     title_cell.font = title_font
@@ -3647,10 +3585,7 @@ def generate_bonus_payment_excel(request):
     ws.row_dimensions[1].height = 35
     
     # Период
-    if user_is_admin:
-        ws.merge_cells('A2:J2')
-    else:
-        ws.merge_cells('A2:I2')
+    ws.merge_cells('A2:I2')
     period_cell = ws['A2']
     period_cell.value = f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}'
     period_cell.font = Font(bold=True, size=12, name='Arial')
@@ -3667,10 +3602,7 @@ def generate_bonus_payment_excel(request):
         status_text = 'Статус: Закрыт'
         status_fill = PatternFill(start_color=EXCEL_STATUS_CLOSED_COLOR, end_color=EXCEL_STATUS_CLOSED_COLOR, fill_type="solid")
     
-    if user_is_admin:
-        ws.merge_cells('A3:J3')
-    else:
-        ws.merge_cells('A3:I3')
+    ws.merge_cells('A3:I3')
     status_cell = ws['A3']
     status_cell.value = status_text
     status_cell.font = Font(bold=True, size=12, color="FFFFFF", name='Arial')
@@ -3683,10 +3615,7 @@ def generate_bonus_payment_excel(request):
     ws.row_dimensions[4].height = 5
     
     # Заголовки таблицы
-    if user_is_admin:
-        headers = ['№', 'Аккаунт', 'ФИО', 'ИИН', 'Счет карты', 'Банк', 'Льготы', 'Начислено', 'ИПН', 'К выплате']
-    else:
-        headers = ['№', 'ФИО', 'ИИН', 'Счет карты', 'Банк', 'Льготы', 'Начислено', 'ИПН', 'К выплате']
+    headers = ['№', 'ФИО', 'ИИН', 'Счет карты', 'Банк', 'Льготы', 'Начислено', 'ИПН', 'К выплате']
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=5, column=col_num)
         cell.value = header
@@ -3702,10 +3631,10 @@ def generate_bonus_payment_excel(request):
     for worker in workers:
         # Получаем счет карты
         account_number = ''
-        if user_is_admin:
-            coal_request = CoalRequest.objects.filter(worker=worker).order_by('-created_at').first()
-        else:
-            coal_request = CoalRequest.objects.filter(worker__user=request.user, worker=worker).order_by('-created_at').first()
+        coal_qs = CoalRequest.objects.filter(worker=worker)
+        if not user_is_admin:
+            coal_qs = coal_qs.filter(worker__user=request.user)
+        coal_request = coal_qs.order_by('-created_at').first()
         
         if coal_request:
             if coal_request.account_type == '20_digit':
@@ -3713,10 +3642,10 @@ def generate_bonus_payment_excel(request):
             else:
                 account_number = coal_request.account_number or worker.current_account or ''
         else:
-            if user_is_admin:
-                funeral_request = FuneralRequest.objects.filter(worker=worker).order_by('-created_at').first()
-            else:
-                funeral_request = FuneralRequest.objects.filter(worker__user=request.user, worker=worker).order_by('-created_at').first()
+            funeral_qs = FuneralRequest.objects.filter(worker=worker)
+            if not user_is_admin:
+                funeral_qs = funeral_qs.filter(worker__user=request.user)
+            funeral_request = funeral_qs.order_by('-created_at').first()
             
             if funeral_request:
                 if funeral_request.account_type == '20_digit':
@@ -3738,47 +3667,41 @@ def generate_bonus_payment_excel(request):
         # Порядковый номер
         ws.cell(row=row_num, column=1, value=row_num - 5).alignment = center_alignment
         
-        col_offset = 0
-        if user_is_admin:
-            # Аккаунт
-            ws.cell(row=row_num, column=2, value=worker.user.username if worker.user else '').alignment = center_alignment
-            col_offset = 1
-        
         # ФИО
-        ws.cell(row=row_num, column=2 + col_offset, value=worker.full_name).alignment = left_alignment
+        ws.cell(row=row_num, column=2, value=worker.full_name).alignment = left_alignment
         
         # ИИН
-        ws.cell(row=row_num, column=3 + col_offset, value=worker.inn or '').alignment = center_alignment
+        ws.cell(row=row_num, column=3, value=worker.inn or '').alignment = center_alignment
         
         # Счет карты
-        ws.cell(row=row_num, column=4 + col_offset, value=account_number).alignment = left_alignment
+        ws.cell(row=row_num, column=4, value=account_number).alignment = left_alignment
         
         # Банк (всегда Народный Банк)
-        ws.cell(row=row_num, column=5 + col_offset, value='Народный Банк').alignment = center_alignment
+        ws.cell(row=row_num, column=5, value='Народный Банк').alignment = center_alignment
         
         # Льготы (для умерших пенсионеров не показываем льготы)
         benefits = ''
         if not bool(worker.is_dead) and bool(worker.has_benefits) and worker.benefits_name:
             benefits = worker.benefits_name
-        ws.cell(row=row_num, column=6 + col_offset, value=benefits).alignment = left_alignment
+        ws.cell(row=row_num, column=6, value=benefits).alignment = left_alignment
         
         # Начислено
         accrued_value = bonus_accrued if bonus_accrued else ''
-        ws.cell(row=row_num, column=7 + col_offset, value=accrued_value).alignment = right_alignment
-        ws.cell(row=row_num, column=7 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=7, value=accrued_value).alignment = right_alignment
+        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
         
         # ИПН
         ipn_value = bonus_ipn if bonus_ipn else ''
-        ws.cell(row=row_num, column=8 + col_offset, value=ipn_value).alignment = right_alignment
-        ws.cell(row=row_num, column=8 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=8, value=ipn_value).alignment = right_alignment
+        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
         
         # К выплате
         to_pay_value = bonus_to_pay if bonus_to_pay else ''
-        ws.cell(row=row_num, column=9 + col_offset, value=to_pay_value).alignment = right_alignment
-        ws.cell(row=row_num, column=9 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=9, value=to_pay_value).alignment = right_alignment
+        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
         
         # Применяем границы
-        max_col = 10 if user_is_admin else 9
+        max_col = 9
         for col in range(1, max_col + 1):
             ws.cell(row=row_num, column=col).border = border_style
         
@@ -3791,30 +3714,18 @@ def generate_bonus_payment_excel(request):
     
     ws.cell(row=row_num, column=1, value='ИТОГО:').font = Font(bold=True)
     ws.cell(row=row_num, column=1).alignment = right_alignment
-    if user_is_admin:
-        ws.merge_cells(f'A{row_num}:G{row_num}')
-        ws.cell(row=row_num, column=8, value=total_accrued).font = Font(bold=True)
-        ws.cell(row=row_num, column=8).alignment = right_alignment
-        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
-        ws.cell(row=row_num, column=9, value=total_ipn).font = Font(bold=True)
-        ws.cell(row=row_num, column=9).alignment = right_alignment
-        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
-        ws.cell(row=row_num, column=10, value=total_to_pay).font = Font(bold=True)
-        ws.cell(row=row_num, column=10).alignment = right_alignment
-        ws.cell(row=row_num, column=10).number_format = EXCEL_CURRENCY_FORMAT
-    else:
-        ws.merge_cells(f'A{row_num}:F{row_num}')
-        ws.cell(row=row_num, column=7, value=total_accrued).font = Font(bold=True)
-        ws.cell(row=row_num, column=7).alignment = right_alignment
-        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
-        ws.cell(row=row_num, column=8, value=total_ipn).font = Font(bold=True)
-        ws.cell(row=row_num, column=8).alignment = right_alignment
-        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
-        ws.cell(row=row_num, column=9, value=total_to_pay).font = Font(bold=True)
-        ws.cell(row=row_num, column=9).alignment = right_alignment
-        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
+    ws.merge_cells(f'A{row_num}:F{row_num}')
+    ws.cell(row=row_num, column=7, value=total_accrued).font = Font(bold=True)
+    ws.cell(row=row_num, column=7).alignment = right_alignment
+    ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
+    ws.cell(row=row_num, column=8, value=total_ipn).font = Font(bold=True)
+    ws.cell(row=row_num, column=8).alignment = right_alignment
+    ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
+    ws.cell(row=row_num, column=9, value=total_to_pay).font = Font(bold=True)
+    ws.cell(row=row_num, column=9).alignment = right_alignment
+    ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
 
-    max_col = 10 if user_is_admin else 9
+    max_col = 9
     total_fill = PatternFill(start_color=EXCEL_TOTAL_FILL_COLOR, end_color=EXCEL_TOTAL_FILL_COLOR, fill_type="solid")
     for col in range(1, max_col + 1):
         ws.cell(row=row_num, column=col).border = border_style
@@ -3822,25 +3733,14 @@ def generate_bonus_payment_excel(request):
     
     # Настройка ширины колонок
     ws.column_dimensions['A'].width = 8  # №
-    if user_is_admin:
-        ws.column_dimensions['B'].width = 15  # Аккаунт
-        ws.column_dimensions['C'].width = 35  # ФИО
-        ws.column_dimensions['D'].width = 15  # ИИН
-        ws.column_dimensions['E'].width = 25  # Счет карты
-        ws.column_dimensions['F'].width = 18  # Банк
-        ws.column_dimensions['G'].width = 25  # Льготы
-        ws.column_dimensions['H'].width = 15  # Начислено
-        ws.column_dimensions['I'].width = 15  # ИПН
-        ws.column_dimensions['J'].width = 15  # К выплате
-    else:
-        ws.column_dimensions['B'].width = 35  # ФИО
-        ws.column_dimensions['C'].width = 15  # ИИН
-        ws.column_dimensions['D'].width = 25  # Счет карты
-        ws.column_dimensions['E'].width = 18  # Банк
-        ws.column_dimensions['F'].width = 25  # Льготы
-        ws.column_dimensions['G'].width = 15  # Начислено
-        ws.column_dimensions['H'].width = 15  # ИПН
-        ws.column_dimensions['I'].width = 15  # К выплате
+    ws.column_dimensions['B'].width = 35  # ФИО
+    ws.column_dimensions['C'].width = 15  # ИИН
+    ws.column_dimensions['D'].width = 25  # Счет карты
+    ws.column_dimensions['E'].width = 18  # Банк
+    ws.column_dimensions['F'].width = 25  # Льготы
+    ws.column_dimensions['G'].width = 15  # Начислено
+    ws.column_dimensions['H'].width = 15  # ИПН
+    ws.column_dimensions['I'].width = 15  # К выплате
     
     # Высота строк
     ws.row_dimensions[1].height = 30
@@ -4021,10 +3921,7 @@ def generate_funeral_services_excel(request):
     right_alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
     
     # Красивый заголовок
-    if user_is_admin:
-        ws.merge_cells('A1:H1')
-    else:
-        ws.merge_cells('A1:G1')
+    ws.merge_cells('A1:G1')
     title_cell = ws['A1']
     title_cell.value = f'СПИСОК РИТУАЛЬНЫХ УСЛУГ'
     title_cell.font = title_font
@@ -4034,10 +3931,7 @@ def generate_funeral_services_excel(request):
     ws.row_dimensions[1].height = 35
     
     # Период
-    if user_is_admin:
-        ws.merge_cells('A2:H2')
-    else:
-        ws.merge_cells('A2:G2')
+    ws.merge_cells('A2:G2')
     period_cell = ws['A2']
     period_cell.value = f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}'
     period_cell.font = Font(bold=True, size=12, name='Arial')
@@ -4054,10 +3948,7 @@ def generate_funeral_services_excel(request):
         status_text = 'Статус: Закрыт'
         status_fill = PatternFill(start_color=EXCEL_STATUS_CLOSED_COLOR, end_color=EXCEL_STATUS_CLOSED_COLOR, fill_type="solid")
     
-    if user_is_admin:
-        ws.merge_cells('A3:H3')
-    else:
-        ws.merge_cells('A3:G3')
+    ws.merge_cells('A3:G3')
     status_cell = ws['A3']
     status_cell.value = status_text
     status_cell.font = Font(bold=True, size=12, color="FFFFFF", name='Arial')
@@ -4070,10 +3961,7 @@ def generate_funeral_services_excel(request):
     ws.row_dimensions[4].height = 5
     
     # Заголовки таблицы
-    if user_is_admin:
-        headers = ['№', 'Аккаунт', 'ФИО ЗАЯВИТЕЛЯ', 'ИИН ЗАЯВИТЕЛЯ', 'СЧЕТ КАРТЫ', 'ФИО ПЕНСИОНЕРА', 'БАНК', 'К ВЫПЛАТЕ']
-    else:
-        headers = ['№', 'ФИО ЗАЯВИТЕЛЯ', 'ИИН ЗАЯВИТЕЛЯ', 'СЧЕТ КАРТЫ', 'ФИО ПЕНСИОНЕРА', 'БАНК', 'К ВЫПЛАТЕ']
+    headers = ['№', 'ФИО ЗАЯВИТЕЛЯ', 'ИИН ЗАЯВИТЕЛЯ', 'СЧЕТ КАРТЫ', 'ФИО ПЕНСИОНЕРА', 'БАНК', 'К ВЫПЛАТЕ']
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=5, column=col_num)
         cell.value = header
@@ -4097,34 +3985,28 @@ def generate_funeral_services_excel(request):
         # Порядковый номер
         ws.cell(row=row_num, column=1, value=row_num - 5).alignment = center_alignment
         
-        col_offset = 0
-        if user_is_admin:
-            # Аккаунт
-            ws.cell(row=row_num, column=2, value=funeral_request.user.username).alignment = center_alignment
-            col_offset = 1
-        
         # ФИО заявителя
-        ws.cell(row=row_num, column=2 + col_offset, value=funeral_request.applicant_full_name).alignment = left_alignment
+        ws.cell(row=row_num, column=2, value=funeral_request.applicant_full_name).alignment = left_alignment
         
         # ИИН заявителя
-        ws.cell(row=row_num, column=3 + col_offset, value=funeral_request.applicant_inn).alignment = center_alignment
+        ws.cell(row=row_num, column=3, value=funeral_request.applicant_inn).alignment = center_alignment
         
         # Счет карты
-        ws.cell(row=row_num, column=4 + col_offset, value=account_number).alignment = left_alignment
+        ws.cell(row=row_num, column=4, value=account_number).alignment = left_alignment
         
         # ФИО пенсионера
-        ws.cell(row=row_num, column=5 + col_offset, value=funeral_request.worker.full_name).alignment = left_alignment
+        ws.cell(row=row_num, column=5, value=funeral_request.worker.full_name).alignment = left_alignment
         
         # Банк (всегда Народный Банк)
-        ws.cell(row=row_num, column=6 + col_offset, value='Народный Банк').alignment = center_alignment
+        ws.cell(row=row_num, column=6, value='Народный Банк').alignment = center_alignment
         
         # К выплате
         to_pay_value = funeral_request.to_pay if funeral_request.to_pay else ''
-        ws.cell(row=row_num, column=7 + col_offset, value=to_pay_value).alignment = right_alignment
-        ws.cell(row=row_num, column=7 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=7, value=to_pay_value).alignment = right_alignment
+        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
         
         # Применяем границы
-        max_col = 8 if user_is_admin else 7
+        max_col = 7
         for col in range(1, max_col + 1):
             ws.cell(row=row_num, column=col).border = border_style
         
@@ -4138,40 +4020,24 @@ def generate_funeral_services_excel(request):
     
     ws.cell(row=row_num, column=1, value='ИТОГО:').font = total_font
     ws.cell(row=row_num, column=1).alignment = right_alignment
-    if user_is_admin:
-        ws.merge_cells(f'A{row_num}:G{row_num}')
-        ws.cell(row=row_num, column=8, value=total_to_pay).font = total_font
-        ws.cell(row=row_num, column=8).alignment = right_alignment
-        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
-    else:
-        ws.merge_cells(f'A{row_num}:F{row_num}')
-        ws.cell(row=row_num, column=7, value=total_to_pay).font = total_font
-        ws.cell(row=row_num, column=7).alignment = right_alignment
-        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
+    ws.merge_cells(f'A{row_num}:F{row_num}')
+    ws.cell(row=row_num, column=7, value=total_to_pay).font = total_font
+    ws.cell(row=row_num, column=7).alignment = right_alignment
+    ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
     
-    max_col = 8 if user_is_admin else 7
+    max_col = 7
     for col in range(1, max_col + 1):
         ws.cell(row=row_num, column=col).border = border_style
         ws.cell(row=row_num, column=col).fill = total_fill
     
     # Настройка ширины колонок
-    if user_is_admin:
-        ws.column_dimensions['A'].width = 8  # №
-        ws.column_dimensions['B'].width = 20  # Аккаунт
-        ws.column_dimensions['C'].width = 30  # ФИО ЗАЯВИТЕЛЯ
-        ws.column_dimensions['D'].width = 15  # ИИН ЗАЯВИТЕЛЯ
-        ws.column_dimensions['E'].width = 25  # СЧЕТ КАРТЫ
-        ws.column_dimensions['F'].width = 30  # ФИО ПЕНСИОНЕРА
-        ws.column_dimensions['G'].width = 18  # БАНК
-        ws.column_dimensions['H'].width = 15  # К ВЫПЛАТЕ
-    else:
-        ws.column_dimensions['A'].width = 8  # №
-        ws.column_dimensions['B'].width = 30  # ФИО ЗАЯВИТЕЛЯ
-        ws.column_dimensions['C'].width = 15  # ИИН ЗАЯВИТЕЛЯ
-        ws.column_dimensions['D'].width = 25  # СЧЕТ КАРТЫ
-        ws.column_dimensions['E'].width = 30  # ФИО ПЕНСИОНЕРА
-        ws.column_dimensions['F'].width = 18  # БАНК
-        ws.column_dimensions['G'].width = 15  # К ВЫПЛАТЕ
+    ws.column_dimensions['A'].width = 8  # №
+    ws.column_dimensions['B'].width = 30  # ФИО ЗАЯВИТЕЛЯ
+    ws.column_dimensions['C'].width = 15  # ИИН ЗАЯВИТЕЛЯ
+    ws.column_dimensions['D'].width = 25  # СЧЕТ КАРТЫ
+    ws.column_dimensions['E'].width = 30  # ФИО ПЕНСИОНЕРА
+    ws.column_dimensions['F'].width = 18  # БАНК
+    ws.column_dimensions['G'].width = 15  # К ВЫПЛАТЕ
     
     # Высота строк
     ws.row_dimensions[1].height = 30
@@ -4379,10 +4245,16 @@ def material_assistance_registry_list(request):
     registry_data = []
     for idx, req in enumerate(material_requests, 1):
         worker = req.worker
+        if req.account_type == '20_digit':
+            account_number = req.account_number or worker.account_20_digit or ''
+        else:
+            account_number = req.account_number or worker.current_account or ''
+
         registry_data.append({
             'number': idx,
             'full_name': worker.full_name,
             'inn': worker.inn or '',
+            'account_number': account_number,
             'assistance_type': req.get_assistance_type_display(),
             'amount': str(req.amount) if req.amount is not None else '',
             'status': req.get_status(),
@@ -4473,10 +4345,7 @@ def generate_material_assistance_registry_excel(request):
     ws = wb.active
     ws.title = safe_excel_sheet_title("Реестр матпомощи")
 
-    headers = ['№']
-    if user_is_admin:
-        headers.append('Аккаунт')
-    headers += ['ФИО', 'ИИН', 'Вид помощи', 'Сумма', 'Статус', 'Дата создания', 'Выдано']
+    headers = ['№', 'ФИО', 'ИИН', 'Счет карты', 'Вид помощи', 'Сумма', 'Статус', 'Дата создания', 'Выдано']
 
     total_columns = len(headers)
     amount_column = headers.index('Сумма') + 1
@@ -4534,15 +4403,19 @@ def generate_material_assistance_registry_excel(request):
     total_amount = Decimal('0')
     for idx, req in enumerate(material_requests, 1):
         worker = req.worker
+        if req.account_type == '20_digit':
+            account_number = req.account_number or worker.account_20_digit or ''
+        else:
+            account_number = req.account_number or worker.current_account or ''
+
         col = 1
         ws.cell(row=row_num, column=col, value=idx).alignment = center_alignment
         col += 1
-        if user_is_admin:
-            ws.cell(row=row_num, column=col, value=req.user.username).alignment = center_alignment
-            col += 1
         ws.cell(row=row_num, column=col, value=worker.full_name).alignment = left_alignment
         col += 1
         ws.cell(row=row_num, column=col, value=worker.inn or '').alignment = center_alignment
+        col += 1
+        ws.cell(row=row_num, column=col, value=account_number).alignment = left_alignment
         col += 1
         ws.cell(row=row_num, column=col, value=req.get_assistance_type_display()).alignment = left_alignment
         col += 1
@@ -4577,29 +4450,17 @@ def generate_material_assistance_registry_excel(request):
         cell.border = border_style
         cell.fill = PatternFill(start_color=EXCEL_TOTAL_FILL_COLOR, end_color=EXCEL_TOTAL_FILL_COLOR, fill_type="solid")
 
-    if user_is_admin:
-        widths = {
-            'A': 8,   # №
-            'B': 16,  # Аккаунт
-            'C': 34,  # ФИО
-            'D': 16,  # ИИН
-            'E': 30,  # Вид помощи
-            'F': 16,  # Сумма
-            'G': 22,  # Статус
-            'H': 16,  # Дата создания
-            'I': 12,  # Выдано
-        }
-    else:
-        widths = {
-            'A': 8,   # №
-            'B': 34,  # ФИО
-            'C': 16,  # ИИН
-            'D': 30,  # Вид помощи
-            'E': 16,  # Сумма
-            'F': 22,  # Статус
-            'G': 16,  # Дата создания
-            'H': 12,  # Выдано
-        }
+    widths = {
+        'A': 8,   # №
+        'B': 34,  # ФИО
+        'C': 16,  # ИИН
+        'D': 25,  # Счет карты
+        'E': 30,  # Вид помощи
+        'F': 16,  # Сумма
+        'G': 22,  # Статус
+        'H': 16,  # Дата создания
+        'I': 12,  # Выдано
+    }
 
     for column_letter, width in widths.items():
         ws.column_dimensions[column_letter].width = width
@@ -4686,10 +4547,7 @@ def generate_pensioner_material_assistance_excel(request):
     right_alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
     
     # Красивый заголовок
-    if user_is_admin:
-        ws.merge_cells('A1:J1')
-    else:
-        ws.merge_cells('A1:I1')
+    ws.merge_cells('A1:I1')
     title_cell = ws['A1']
     title_cell.value = f'СПИСОК МАТЕРИАЛЬНОЙ ПОМОЩИ ПЕНСИОНЕРАМ'
     title_cell.font = title_font
@@ -4699,10 +4557,7 @@ def generate_pensioner_material_assistance_excel(request):
     ws.row_dimensions[1].height = 35
     
     # Период
-    if user_is_admin:
-        ws.merge_cells('A2:J2')
-    else:
-        ws.merge_cells('A2:I2')
+    ws.merge_cells('A2:I2')
     period_cell = ws['A2']
     period_cell.value = f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}'
     period_cell.font = Font(bold=True, size=12, name='Arial')
@@ -4719,10 +4574,7 @@ def generate_pensioner_material_assistance_excel(request):
         status_text = 'Статус: Закрыт'
         status_fill = PatternFill(start_color=EXCEL_STATUS_CLOSED_COLOR, end_color=EXCEL_STATUS_CLOSED_COLOR, fill_type="solid")
     
-    if user_is_admin:
-        ws.merge_cells('A3:J3')
-    else:
-        ws.merge_cells('A3:I3')
+    ws.merge_cells('A3:I3')
     status_cell = ws['A3']
     status_cell.value = status_text
     status_cell.font = Font(bold=True, size=12, color="FFFFFF", name='Arial')
@@ -4735,10 +4587,7 @@ def generate_pensioner_material_assistance_excel(request):
     ws.row_dimensions[4].height = 5
     
     # Заголовки таблицы
-    if user_is_admin:
-        headers = ['№', 'Аккаунт', 'ФИО', 'ИИН', 'СЧЕТ КАРТЫ', 'БАНК', 'ЛЬГОТЫ', 'НАЧИСЛЕНО', 'ИПН', 'К ВЫПЛАТЕ']
-    else:
-        headers = ['№', 'ФИО', 'ИИН', 'СЧЕТ КАРТЫ', 'БАНК', 'ЛЬГОТЫ', 'НАЧИСЛЕНО', 'ИПН', 'К ВЫПЛАТЕ']
+    headers = ['№', 'ФИО', 'ИИН', 'СЧЕТ КАРТЫ', 'БАНК', 'ЛЬГОТЫ', 'НАЧИСЛЕНО', 'ИПН', 'К ВЫПЛАТЕ']
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=5, column=col_num)
         cell.value = header
@@ -4756,10 +4605,10 @@ def generate_pensioner_material_assistance_excel(request):
         
         # Получаем счет карты
         account_number = ''
-        if user_is_admin:
-            coal_request = CoalRequest.objects.filter(worker=worker).order_by('-created_at').first()
-        else:
-            coal_request = CoalRequest.objects.filter(worker__user=request.user, worker=worker).order_by('-created_at').first()
+        coal_qs = CoalRequest.objects.filter(worker=worker)
+        if not user_is_admin:
+            coal_qs = coal_qs.filter(worker__user=request.user)
+        coal_request = coal_qs.order_by('-created_at').first()
         
         if coal_request:
             if coal_request.account_type == '20_digit':
@@ -4767,10 +4616,10 @@ def generate_pensioner_material_assistance_excel(request):
             else:
                 account_number = coal_request.account_number or worker.current_account or ''
         else:
-            if user_is_admin:
-                funeral_request = FuneralRequest.objects.filter(worker=worker).order_by('-created_at').first()
-            else:
-                funeral_request = FuneralRequest.objects.filter(worker__user=request.user, worker=worker).order_by('-created_at').first()
+            funeral_qs = FuneralRequest.objects.filter(worker=worker)
+            if not user_is_admin:
+                funeral_qs = funeral_qs.filter(worker__user=request.user)
+            funeral_request = funeral_qs.order_by('-created_at').first()
             
             if funeral_request:
                 if funeral_request.account_type == '20_digit':
@@ -4783,47 +4632,41 @@ def generate_pensioner_material_assistance_excel(request):
         # Порядковый номер
         ws.cell(row=row_num, column=1, value=row_num - 5).alignment = center_alignment
         
-        col_offset = 0
-        if user_is_admin:
-            # Аккаунт
-            ws.cell(row=row_num, column=2, value=material_request.user.username).alignment = center_alignment
-            col_offset = 1
-        
         # ФИО
-        ws.cell(row=row_num, column=2 + col_offset, value=worker.full_name).alignment = left_alignment
+        ws.cell(row=row_num, column=2, value=worker.full_name).alignment = left_alignment
         
         # ИИН
-        ws.cell(row=row_num, column=3 + col_offset, value=worker.inn or '').alignment = center_alignment
+        ws.cell(row=row_num, column=3, value=worker.inn or '').alignment = center_alignment
         
         # Счет карты
-        ws.cell(row=row_num, column=4 + col_offset, value=account_number).alignment = left_alignment
+        ws.cell(row=row_num, column=4, value=account_number).alignment = left_alignment
         
         # Банк (всегда Народный Банк)
-        ws.cell(row=row_num, column=5 + col_offset, value='Народный Банк').alignment = center_alignment
+        ws.cell(row=row_num, column=5, value='Народный Банк').alignment = center_alignment
         
         # Льготы (для умерших пенсионеров не показываем льготы)
         benefits = ''
         if not bool(worker.is_dead) and bool(worker.has_benefits) and worker.benefits_name:
             benefits = worker.benefits_name
-        ws.cell(row=row_num, column=6 + col_offset, value=benefits).alignment = left_alignment
+        ws.cell(row=row_num, column=6, value=benefits).alignment = left_alignment
         
         # Начислено
         accrued_value = material_request.accrued if material_request.accrued else ''
-        ws.cell(row=row_num, column=7 + col_offset, value=accrued_value).alignment = right_alignment
-        ws.cell(row=row_num, column=7 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=7, value=accrued_value).alignment = right_alignment
+        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
         
         # ИПН
         ipn_value = material_request.ipn if material_request.ipn else ''
-        ws.cell(row=row_num, column=8 + col_offset, value=ipn_value).alignment = right_alignment
-        ws.cell(row=row_num, column=8 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=8, value=ipn_value).alignment = right_alignment
+        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
         
         # К выплате
         to_pay_value = material_request.to_pay if material_request.to_pay else ''
-        ws.cell(row=row_num, column=9 + col_offset, value=to_pay_value).alignment = right_alignment
-        ws.cell(row=row_num, column=9 + col_offset).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=9, value=to_pay_value).alignment = right_alignment
+        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
         
         # Применяем границы
-        max_col = 10 if user_is_admin else 9
+        max_col = 9
         for col in range(1, max_col + 1):
             ws.cell(row=row_num, column=col).border = border_style
         
@@ -4836,30 +4679,18 @@ def generate_pensioner_material_assistance_excel(request):
     
     ws.cell(row=row_num, column=1, value='ИТОГО:').font = Font(bold=True)
     ws.cell(row=row_num, column=1).alignment = right_alignment
-    if user_is_admin:
-        ws.merge_cells(f'A{row_num}:G{row_num}')
-        ws.cell(row=row_num, column=8, value=total_accrued).font = Font(bold=True)
-        ws.cell(row=row_num, column=8).alignment = right_alignment
-        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
-        ws.cell(row=row_num, column=9, value=total_ipn).font = Font(bold=True)
-        ws.cell(row=row_num, column=9).alignment = right_alignment
-        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
-        ws.cell(row=row_num, column=10, value=total_to_pay).font = Font(bold=True)
-        ws.cell(row=row_num, column=10).alignment = right_alignment
-        ws.cell(row=row_num, column=10).number_format = EXCEL_CURRENCY_FORMAT
-    else:
-        ws.merge_cells(f'A{row_num}:F{row_num}')
-        ws.cell(row=row_num, column=7, value=total_accrued).font = Font(bold=True)
-        ws.cell(row=row_num, column=7).alignment = right_alignment
-        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
-        ws.cell(row=row_num, column=8, value=total_ipn).font = Font(bold=True)
-        ws.cell(row=row_num, column=8).alignment = right_alignment
-        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
-        ws.cell(row=row_num, column=9, value=total_to_pay).font = Font(bold=True)
-        ws.cell(row=row_num, column=9).alignment = right_alignment
-        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
+    ws.merge_cells(f'A{row_num}:F{row_num}')
+    ws.cell(row=row_num, column=7, value=total_accrued).font = Font(bold=True)
+    ws.cell(row=row_num, column=7).alignment = right_alignment
+    ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
+    ws.cell(row=row_num, column=8, value=total_ipn).font = Font(bold=True)
+    ws.cell(row=row_num, column=8).alignment = right_alignment
+    ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
+    ws.cell(row=row_num, column=9, value=total_to_pay).font = Font(bold=True)
+    ws.cell(row=row_num, column=9).alignment = right_alignment
+    ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
 
-    max_col = 10 if user_is_admin else 9
+    max_col = 9
     total_fill = PatternFill(start_color=EXCEL_TOTAL_FILL_COLOR, end_color=EXCEL_TOTAL_FILL_COLOR, fill_type="solid")
     for col in range(1, max_col + 1):
         ws.cell(row=row_num, column=col).border = border_style
@@ -4867,25 +4698,14 @@ def generate_pensioner_material_assistance_excel(request):
     
     # Настройка ширины колонок
     ws.column_dimensions['A'].width = 8  # №
-    if user_is_admin:
-        ws.column_dimensions['B'].width = 15  # Аккаунт
-        ws.column_dimensions['C'].width = 35  # ФИО
-        ws.column_dimensions['D'].width = 15  # ИИН
-        ws.column_dimensions['E'].width = 25  # Счет карты
-        ws.column_dimensions['F'].width = 18  # Банк
-        ws.column_dimensions['G'].width = 25  # Льготы
-        ws.column_dimensions['H'].width = 15  # Начислено
-        ws.column_dimensions['I'].width = 15  # ИПН
-        ws.column_dimensions['J'].width = 15  # К выплате
-    else:
-        ws.column_dimensions['B'].width = 35  # ФИО
-        ws.column_dimensions['C'].width = 15  # ИИН
-        ws.column_dimensions['D'].width = 25  # Счет карты
-        ws.column_dimensions['E'].width = 18  # Банк
-        ws.column_dimensions['F'].width = 25  # Льготы
-        ws.column_dimensions['G'].width = 15  # Начислено
-        ws.column_dimensions['H'].width = 15  # ИПН
-        ws.column_dimensions['I'].width = 15  # К выплате
+    ws.column_dimensions['B'].width = 35  # ФИО
+    ws.column_dimensions['C'].width = 15  # ИИН
+    ws.column_dimensions['D'].width = 25  # Счет карты
+    ws.column_dimensions['E'].width = 18  # Банк
+    ws.column_dimensions['F'].width = 25  # Льготы
+    ws.column_dimensions['G'].width = 15  # Начислено
+    ws.column_dimensions['H'].width = 15  # ИПН
+    ws.column_dimensions['I'].width = 15  # К выплате
     
     # Высота строк
     ws.row_dimensions[1].height = 30

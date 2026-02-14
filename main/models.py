@@ -295,11 +295,17 @@ class MaterialAssistanceRequest(models.Model):
         ('funeral', 'Погребение близких родственников'),
         ('treatment', 'На лечение'),
     ]
+    ACCOUNT_TYPE_CHOICES = [
+        ('20_digit', 'Карточный счет'),
+        ('current', 'Текущий счет'),
+    ]
     
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='material_assistance_requests', verbose_name='Пользователь')
     worker = models.ForeignKey(Worker, on_delete=models.CASCADE, related_name='material_assistance_requests', verbose_name='Работник')
     assistance_type = models.CharField('Вид помощи', max_length=50, choices=ASSISTANCE_TYPE_CHOICES)
     amount = models.DecimalField('Сумма', max_digits=10, decimal_places=2)
+    account_type = models.CharField('Тип счета', max_length=20, choices=ACCOUNT_TYPE_CHOICES, default='20_digit')
+    account_number = models.CharField('Номер счета', max_length=25, blank=True)
     request_status = models.CharField('Статус заявления', max_length=20, choices=REQUEST_STATUS_CHOICES, default='active')
     is_issued = models.BooleanField('Выдано', default=False)
     accrued = models.DecimalField('Начислено', max_digits=10, decimal_places=2, null=True, blank=True)

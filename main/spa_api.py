@@ -288,6 +288,11 @@ def _serialize_vacation_request(item):
 
 
 def _serialize_material_request(item):
+    if item.account_type == '20_digit':
+        account_number = item.account_number or item.worker.account_20_digit or ''
+    else:
+        account_number = item.account_number or item.worker.current_account or ''
+
     return {
         'id': item.id,
         'type': 'material',
@@ -296,6 +301,9 @@ def _serialize_material_request(item):
         'assistance_type': item.assistance_type,
         'assistance_type_display': item.get_assistance_type_display(),
         'amount': float(item.amount) if item.amount is not None else None,
+        'account_type': item.account_type,
+        'account_type_display': item.get_account_type_display(),
+        'account_number': account_number,
         'status': item.get_status(),
         'status_text': item.get_status_display_text(),
         'request_status': item.request_status,
@@ -804,9 +812,21 @@ def api_create_material_request(request):
 
     assistance_type = (source.get('assistance_type') or '').strip()
     amount_raw = source.get('amount') or '0'
+    account_type = source.get('account_type')
+    account_number = (source.get('account_number') or '').strip()
 
     if not assistance_type:
         return _api_error('Не выбран вид помощи')
+    if account_type not in dict(MaterialAssistanceRequest.ACCOUNT_TYPE_CHOICES):
+        return _api_error('Некорректный тип счета')
+    if not account_number:
+        return _api_error('Не указан номер счета')
+    if not account_number.startswith('KZ'):
+        return _api_error('Номер счета должен начинаться с KZ')
+    if len(account_number) != 20:
+        return _api_error('Номер счета должен содержать KZ и 18 цифр')
+    if not account_number[2:].isdigit():
+        return _api_error('После KZ должны быть только цифры')
 
     if worker.status == 'pensioner':
         if MaterialAssistanceRequest.objects.filter(worker=worker, assistance_type=assistance_type).exists():
@@ -822,12 +842,21 @@ def api_create_material_request(request):
         if amount_decimal <= 0:
             return _api_error('Сумма должна быть больше 0')
 
-    item = MaterialAssistanceRequest.objects.create(
-        user=request.user,
-        worker=worker,
-        assistance_type=assistance_type,
-        amount=amount_decimal,
-    )
+    with transaction.atomic():
+        if account_type == '20_digit':
+            worker.account_20_digit = account_number
+        else:
+            worker.current_account = account_number
+        worker.save()
+
+        item = MaterialAssistanceRequest.objects.create(
+            user=request.user,
+            worker=worker,
+            assistance_type=assistance_type,
+            amount=amount_decimal,
+            account_type=account_type,
+            account_number=account_number,
+        )
 
     return JsonResponse({
         'success': True,

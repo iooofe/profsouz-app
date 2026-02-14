@@ -1148,7 +1148,12 @@ function ApplicationsTab({ user }) {
   });
 
   const [materialWorker, setMaterialWorker] = useState(null);
-  const [materialData, setMaterialData] = useState({ assistance_type: 'sick_leave', amount: '' });
+  const [materialData, setMaterialData] = useState({
+    assistance_type: 'sick_leave',
+    amount: '',
+    account_type: '20_digit',
+    account_number: '',
+  });
 
   const [coalWorker, setCoalWorker] = useState(null);
   const [coalData, setCoalData] = useState({
@@ -1261,6 +1266,8 @@ function ApplicationsTab({ user }) {
           worker_id: materialWorker.id,
           assistance_type: materialData.assistance_type,
           amount: materialData.amount,
+          account_type: materialData.account_type,
+          account_number: materialData.account_number,
         },
       });
 
@@ -1570,6 +1577,27 @@ function ApplicationsTab({ user }) {
           </label>
 
           <label>
+            Тип счета
+            <select
+              value={materialData.account_type}
+              onChange={(e) => setMaterialData((prev) => ({ ...prev, account_type: e.target.value }))}
+            >
+              <option value="20_digit">Карточный счет</option>
+              <option value="current">Текущий счет</option>
+            </select>
+          </label>
+
+          <label>
+            Номер счета
+            <input
+              value={materialData.account_number}
+              onChange={(e) => setMaterialData((prev) => ({ ...prev, account_number: e.target.value }))}
+              placeholder="KZ..."
+              required
+            />
+          </label>
+
+          <label>
             Сумма
             <input
               type="number"
@@ -1720,6 +1748,8 @@ function ReportsTab({ user }) {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [detailData, setDetailData] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
@@ -1753,6 +1783,17 @@ function ReportsTab({ user }) {
       return typeOk && searchOk;
     });
   }, [rows, search, typeFilter]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, typeFilter, pageSize, rows.length]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pagedRows = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return filteredRows.slice(startIndex, startIndex + pageSize);
+  }, [filteredRows, currentPage, pageSize]);
 
   const loadDetail = async (row) => {
     setDetailModalOpen(true);
@@ -1856,13 +1897,20 @@ function ReportsTab({ user }) {
             <Search size={14} />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск..." />
           </div>
-          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-            <option value="all">Все типы</option>
-            <option value="vacation">Путевка</option>
-            <option value="material">Матпомощь</option>
-            <option value="coal">Уголь</option>
-            <option value="funeral">Погребение</option>
-          </select>
+          <div className="right-actions">
+            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+              <option value="all">Все типы</option>
+              <option value="vacation">Путевка</option>
+              <option value="material">Матпомощь</option>
+              <option value="coal">Уголь</option>
+              <option value="funeral">Погребение</option>
+            </select>
+            <select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
+              <option value="10">10 на странице</option>
+              <option value="20">20 на странице</option>
+              <option value="50">50 на странице</option>
+            </select>
+          </div>
         </div>
 
         {error && <div className="error-banner">{error}</div>}
@@ -1872,58 +1920,77 @@ function ReportsTab({ user }) {
             <Loader2 className="spin" size={20} />
           </div>
         ) : (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Тип</th>
-                  <th>Работник</th>
-                  <th>Статус</th>
-                  <th>Дата</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRows.map((row) => (
-                  <tr key={`${row.type}-${row.id}`}>
-                    <td>{typeLabel[row.type] || row.type}</td>
-                    <td>{row.worker_name}</td>
-                    <td>
-                      <span className={cn('badge', row.status === 'active' ? 'ok' : row.status === 'pending' ? 'warn' : '')}>
-                        {row.status_text}
-                      </span>
-                    </td>
-                    <td>{row.created_at}</td>
-                    <td className="actions-cell">
-                      <button className="btn btn-secondary" onClick={() => loadDetail(row)}>
-                        <Eye size={13} />
-                      </button>
-                      <a className="btn btn-secondary" href={row.download_url} target="_blank" rel="noreferrer">
-                        <Download size={13} />
-                      </a>
-                      {user.is_admin && (
-                        <button className="btn btn-danger" onClick={() => rejectReport(row)}>
-                          Отказать
-                        </button>
-                      )}
-                      {!user.is_admin && (row.type === 'vacation' || row.type === 'coal') && (
-                        <button className="btn btn-danger" onClick={() => deleteReport(row)}>
-                          Удалить
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {filteredRows.length === 0 && (
+          <>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
                   <tr>
-                    <td colSpan={5} className="empty-row">
-                      Нет данных
-                    </td>
+                    <th>Тип</th>
+                    <th>Работник</th>
+                    <th>Статус</th>
+                    <th>Дата</th>
+                    <th />
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {pagedRows.map((row) => (
+                    <tr key={`${row.type}-${row.id}`}>
+                      <td>{typeLabel[row.type] || row.type}</td>
+                      <td>{row.worker_name}</td>
+                      <td>
+                        <span className={cn('badge', row.status === 'active' ? 'ok' : row.status === 'pending' ? 'warn' : '')}>
+                          {row.status_text}
+                        </span>
+                      </td>
+                      <td>{row.created_at}</td>
+                      <td className="actions-cell">
+                        <button className="btn btn-secondary" onClick={() => loadDetail(row)}>
+                          <Eye size={13} />
+                        </button>
+                        <a className="btn btn-secondary" href={row.download_url} target="_blank" rel="noreferrer">
+                          <Download size={13} />
+                        </a>
+                        {user.is_admin && (
+                          <button className="btn btn-danger" onClick={() => rejectReport(row)}>
+                            Отказать
+                          </button>
+                        )}
+                        {!user.is_admin && (row.type === 'vacation' || row.type === 'coal') && (
+                          <button className="btn btn-danger" onClick={() => deleteReport(row)}>
+                            Удалить
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {filteredRows.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="empty-row">
+                        Нет данных
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {filteredRows.length > 0 && (
+              <div className="pager">
+                <button className="btn btn-secondary" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>
+                  Назад
+                </button>
+                <span>
+                  Страница {currentPage} из {totalPages}
+                </span>
+                <button
+                  className="btn btn-secondary"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage(currentPage + 1)}
+                >
+                  Вперед
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -2003,6 +2070,8 @@ function ReportsTab({ user }) {
                       {renderDetailGrid([
                         { label: 'Вид помощи', value: detailData.assistance_details.assistance_type },
                         { label: 'Сумма', value: detailData.assistance_details.amount, money: true },
+                        { label: 'Тип счета', value: detailData.assistance_details.account_type },
+                        { label: 'Номер счета', value: detailData.assistance_details.account_number },
                         { label: 'Статус', value: detailData.assistance_details.status_text },
                       ])}
                     </section>
@@ -2460,6 +2529,19 @@ function ListsTab({ user }) {
         ['Начислено', 'accrued'],
         ['ИПН', 'ipn'],
         ['К выплате', 'to_pay'],
+      ];
+    }
+    if (active === 'registry') {
+      return [
+        ['№', 'number'],
+        ['ФИО', 'full_name'],
+        ['ИИН', 'inn'],
+        ['Счет', 'account_number'],
+        ['Вид помощи', 'assistance_type'],
+        ['Сумма', 'amount'],
+        ['Статус', 'status_text'],
+        ['Дата', 'created_at'],
+        ['Выдано', 'is_issued'],
       ];
     }
     return [
