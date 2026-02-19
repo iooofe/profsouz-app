@@ -1517,6 +1517,7 @@ function ApplicationsTab({ user }) {
                   resort: nextResort,
                   seasons: nextResort === 'orlenok' ? prev.seasons : [],
                   custom_price: ['zhartas', 'shakhter'].includes(nextResort) ? prev.custom_price : '',
+                  study_certificate_file: nextResort === 'discovery' ? prev.study_certificate_file : null,
                 }));
               }}
             >
@@ -1607,15 +1608,17 @@ function ApplicationsTab({ user }) {
             </div>
           )}
 
-          <label>
-            Справка об очном обучении
-            <input
-              type="file"
-              onChange={(e) =>
-                setVacationData((prev) => ({ ...prev, study_certificate_file: e.target.files?.[0] || null }))
-              }
-            />
-          </label>
+          {vacationData.resort === 'discovery' && (
+            <label>
+              Справка об очном обучении
+              <input
+                type="file"
+                onChange={(e) =>
+                  setVacationData((prev) => ({ ...prev, study_certificate_file: e.target.files?.[0] || null }))
+                }
+              />
+            </label>
+          )}
 
           <button className="btn btn-primary" type="submit" disabled={loading}>
             {loading ? <Loader2 className="spin" size={14} /> : <Check size={14} />} Создать

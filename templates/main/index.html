@@ -2791,8 +2791,8 @@
                     hasOrlenokAgeIssue = true;
                 }
                 
-                // Для остальных курортов - проверка на 18 лет
-                if (resort !== 'orlenok' && member.age >= 18) {
+                // Для "Дискавери" - проверка на 18 лет
+                if (resort === 'discovery' && member.age >= 18) {
                     needsCertificate = true;
                 }
             });
@@ -3048,10 +3048,10 @@
                     return false;
                 }
                 
-                // Для остальных курортов - проверка на 18 лет и обязательный файл
-                if (resort !== 'orlenok' && member.age >= 18) {
+                // Для "Дискавери" - проверка на 18 лет и обязательный файл
+                if (resort === 'discovery' && member.age >= 18) {
                     if (!studyCertFile || !studyCertFile.files || studyCertFile.files.length === 0) {
-                        showError(`Для ${member.relationship.toLowerCase()} ${member.full_name} старше 18 лет (возраст ${member.age} лет) необходимо прикрепить справку об очном обучении!`);
+                        showError(`Для ${member.relationship.toLowerCase()} ${member.full_name} старше 18 лет (возраст ${member.age} лет) на курорт "Дискавери" необходимо прикрепить справку об очном обучении!`);
                         return false;
                     }
                 }

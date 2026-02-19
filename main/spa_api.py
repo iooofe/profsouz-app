@@ -784,10 +784,10 @@ def api_create_vacation_request(request):
                 return _api_error(
                     f'{fm.get_relationship_display()} {fm.full_name} не проходит по возрасту для ДОЦ "Орленок" (возраст {age} лет)'
                 )
-            if resort != 'orlenok' and age >= 18:
+            if resort == 'discovery' and age >= 18:
                 if not request.FILES.get('study_certificate_file'):
                     return _api_error(
-                        f'Для {fm.get_relationship_display().lower()} {fm.full_name} старше 18 лет нужна справка об очном обучении'
+                        f'Для {fm.get_relationship_display().lower()} {fm.full_name} старше 18 лет для курорта "Дискавери" нужна справка об очном обучении'
                     )
 
     if not is_admin(request.user) and resort in ['zhartas', 'shakhter']:

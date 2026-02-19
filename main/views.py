@@ -847,13 +847,13 @@ def create_vacation_request(request):
                         )
                         return redirect(f"{reverse('main:index')}?tab=applications")
                     
-                    # Для остальных курортов - проверка на 18 лет и обязательный файл
-                    if resort != 'orlenok' and age >= 18:
+                    # Для "Дискавери" - проверка на 18 лет и обязательный файл
+                    if resort == 'discovery' and age >= 18:
                         study_certificate = request.FILES.get('study_certificate_file')
                         if not study_certificate:
                             messages.error(
                                 request,
-                                f'Для {fm.get_relationship_display().lower()} {fm.full_name} старше 18 лет (возраст {age} лет) необходимо прикрепить справку об очном обучении!'
+                                f'Для {fm.get_relationship_display().lower()} {fm.full_name} старше 18 лет (возраст {age} лет) на курорт "Дискавери" необходимо прикрепить справку об очном обучении!'
                             )
                             return redirect(f"{reverse('main:index')}?tab=applications")
         
@@ -1123,9 +1123,9 @@ def edit_vacation_request(request, request_id):
                 continue
             if resort == 'orlenok' and age >= 14:
                 return JsonResponse({'error': f'{fm.get_relationship_display()} {fm.full_name} не проходит по возрасту для ДОЦ \"Орленок\" (возраст {age} лет, требуется до 14 лет)'}, status=400)
-            if resort != 'orlenok' and age >= 18:
+            if resort == 'discovery' and age >= 18:
                 if not vacation.study_certificate_file:
-                    return JsonResponse({'error': f'Для {fm.get_relationship_display().lower()} {fm.full_name} старше 18 лет необходимо прикрепить справку об очном обучении (отредактируйте заявление с приложением файла)'}, status=400)
+                    return JsonResponse({'error': f'Для {fm.get_relationship_display().lower()} {fm.full_name} старше 18 лет на курорт "Дискавери" необходимо прикрепить справку об очном обучении (отредактируйте заявление с приложением файла)'}, status=400)
 
     # Применяем изменения
     vacation.resort = resort
