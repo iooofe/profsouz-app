@@ -115,6 +115,13 @@ label {
   color: #33465b;
 }
 
+.field-hint {
+  margin-top: -4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #5c6f83;
+}
+
 input,
 select,
 textarea {
@@ -632,6 +639,10 @@ textarea:focus {
   padding: 8px;
 }
 
+.family-select .muted {
+  margin: 0;
+}
+
 .chips-block {
   display: flex;
   align-items: center;
@@ -786,6 +797,28 @@ textarea:focus {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.list-search {
+  min-width: 280px;
+  max-width: 380px;
+}
+
+.sortable-th {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sortable-th-active {
+  color: #184d82;
+}
+
+.th-sort {
+  margin-left: 6px;
+  color: #6b7f97;
+  font-size: 11px;
 }
 
 .table-input {

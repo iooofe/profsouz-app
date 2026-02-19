@@ -91,7 +91,7 @@ class WorkerForm(forms.ModelForm):
             'has_benefits', 'benefits_file', 'benefits_name',
             'has_miner_glory', 'miner_glory_file',
             'house_passport_file', 'pensioner_id_file', 'account_20_digit', 'current_account',
-            'is_dead', 'death_certificate_file'
+            'is_dead', 'death_date', 'death_certificate_file'
         ]
         widgets = {
             'full_name': forms.TextInput(attrs={
@@ -146,6 +146,10 @@ class WorkerForm(forms.ModelForm):
             'id_issued_by': forms.TextInput(attrs={
                 'class': 'form-input',
                 'placeholder': 'Кем выдано',
+            }),
+            'death_date': forms.DateInput(attrs={
+                'class': 'form-input',
+                'type': 'date',
             }),
         }
 

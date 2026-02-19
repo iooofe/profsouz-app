@@ -4,6 +4,7 @@ from django.utils import timezone
 from datetime import date, timedelta
 from main.models import Worker, FamilyMember, VacationRequest, Statement
 import random
+import calendar
 
 
 class Command(BaseCommand):
@@ -27,6 +28,18 @@ class Command(BaseCommand):
             return
         
         self.stdout.write(f'Создание тестовых данных для пользователя {username}...')
+
+        def period_start_for_month_offset(base_date, month_offset):
+            year = base_date.year
+            month = base_date.month - month_offset
+            while month <= 0:
+                month += 12
+                year -= 1
+            return date(year, month, 1)
+
+        def period_end_for_start(period_start):
+            last_day = calendar.monthrange(period_start.year, period_start.month)[1]
+            return date(period_start.year, period_start.month, min(30, last_day))
         
         # Список тестовых работников
         test_workers_data = [
@@ -153,17 +166,9 @@ class Command(BaseCommand):
         
         # Создаем ведомости за последние 3 месяца
         for month_offset in range(1, 4):
-            # Вычисляем период (20 число месяца по 19 число следующего)
-            if today.month - month_offset <= 0:
-                period_start = date(today.year - 1, 12 + today.month - month_offset, 20)
-            else:
-                period_start = date(today.year, today.month - month_offset, 20)
-            
-            # Вычисляем конец периода (19 число следующего месяца)
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            # Период: с 1 по 30 число месяца (или последний день месяца).
+            period_start = period_start_for_month_offset(today, month_offset)
+            period_end = period_end_for_start(period_start)
             
             # Ведомость Жартас
             zhartas_statement, created = Statement.objects.get_or_create(
@@ -206,17 +211,8 @@ class Command(BaseCommand):
         
         # Создаем заявления за последние 3 месяца
         for month_offset in range(3):
-            # Вычисляем период (20 число месяца по 19 число следующего)
-            if today.month - month_offset <= 0:
-                period_start = date(today.year - 1, 12 + today.month - month_offset, 20)
-            else:
-                period_start = date(today.year, today.month - month_offset, 20)
-            
-            # Вычисляем конец периода (19 число следующего месяца)
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            period_start = period_start_for_month_offset(today, month_offset)
+            period_end = period_end_for_start(period_start)
             
             # Создаем несколько заявлений в каждом периоде (по 2-3 на каждого работника)
             for worker in created_workers[:3]:  # Берем первых 3 работников
@@ -263,4 +259,3 @@ class Command(BaseCommand):
                     ))
         
         self.stdout.write(self.style.SUCCESS('\nТестовые данные успешно созданы!'))
-

@@ -77,6 +77,32 @@ class Command(BaseCommand):
         "ш.ШАХТИНСКАЯ": "ш. Шахтинская",
     }
 
+    # Частые ключевые слова должностей, чтобы не путать их с ФИО.
+    POSITION_KEYWORDS = (
+        "должност",
+        "горн",
+        "подзем",
+        "проходчик",
+        "слесар",
+        "электрослесар",
+        "электровоз",
+        "машинист",
+        "мастер",
+        "начальник",
+        "заместител",
+        "инженер",
+        "оператор",
+        "водител",
+        "гроз",
+        "гргв",
+        "лаборант",
+        "диспетчер",
+        "бригадир",
+        "механик",
+        "охран",
+        "дежурн",
+    )
+
     def handle(self, *args, **options):
         # Сначала создаем заранее определенных пользователей
         users_data = [
@@ -232,7 +258,11 @@ class Command(BaseCommand):
                 if not h:
                     continue
                 for variant in variants:
-                    if h == variant or variant in h or (len(variant) > 3 and h in variant):
+                    if (
+                        h == variant
+                        or (len(variant) >= 3 and variant in h)
+                        or (len(variant) > 3 and len(h) > 2 and h in variant)
+                    ):
                         col_index[field] = i
                         break
                 if field in col_index:
@@ -245,21 +275,20 @@ class Command(BaseCommand):
         idx = idx_map.get(key)
         if idx is None or idx >= len(row):
             return ""
-        value = row[idx]
+        return self._to_text(row[idx])
+
+    def _to_text(self, value):
+        """Универсальное безопасное преобразование значения ячейки в строку."""
         if value is None:
             return ""
-        # Если это дата, преобразуем в строку
         if isinstance(value, datetime):
             return value.strftime("%d.%m.%Y")
-        # Для чисел используем форматирование без десятичных знаков, чтобы сохранить точность
         if isinstance(value, (int, float)):
-            # Используем форматирование для сохранения точности больших чисел
             if isinstance(value, float) and value.is_integer():
                 return f"{int(value)}"
-            elif isinstance(value, float):
+            if isinstance(value, float):
                 return f"{value:.0f}"
-            else:
-                return str(value)
+            return str(value)
         return str(value).strip()
 
     def _parse_union_flag(self, union_date_str):
@@ -288,6 +317,209 @@ class Command(BaseCommand):
             return "pensioner"
         return "worker"
 
+    def _normalize_personnel_number(self, value):
+        """Нормализует табельный номер, сохраняя только корректный текстовый вид."""
+        text = self._to_text(value)
+        if not text:
+            return ""
+        text = text.replace('\xa0', '').replace(' ', '').replace(',', '')
+        if text.endswith('.0'):
+            text = text[:-2]
+        if text.endswith('.'):
+            text = text[:-1]
+        return text.strip()
+
+    def _looks_like_name_value(self, value):
+        """Похоже ли значение на часть ФИО."""
+        text = (value or "").strip()
+        if not text:
+            return False
+        if any(ch.isdigit() for ch in text):
+            return False
+        if self._looks_like_position_value(text):
+            return False
+        lowered = text.lower()
+        if any(word in lowered for word in ("таб", "фам", "имя", "отче", "должност", "дата", "вступ")):
+            return False
+        return any(ch.isalpha() for ch in text)
+
+    def _looks_like_position_value(self, value):
+        """Похоже ли значение на должность/профессию, а не на ФИО."""
+        text = (value or "").strip()
+        if not text:
+            return False
+        lowered = text.lower()
+        return any(keyword in lowered for keyword in self.POSITION_KEYWORDS)
+
+    def _looks_like_person_full_name(self, value):
+        """Похоже ли значение именно на ФИО работника."""
+        text = (value or "").strip()
+        if not text:
+            return False
+        if self._looks_like_position_value(text):
+            return False
+        words = [w for w in text.split() if w]
+        if len(words) < 2:
+            return False
+        return self._looks_like_name_value(text)
+
+    def _name_quality(self, full_name):
+        """Оценка качества ФИО: чем больше слов и длина, тем лучше."""
+        text = (full_name or "").strip()
+        if not text:
+            return 0
+        words = [w for w in text.split() if w]
+        if not words:
+            return 0
+        return len(words) * 10 + len(text)
+
+    def _guess_full_name_from_row(self, row, col_index):
+        """
+        Пытается найти в строке неразмеченный столбец с полным ФИО.
+        Полезно для файлов, где заголовок у колонки ФИО пустой.
+        """
+        best_name = ""
+        best_score = 0
+        personnel_idx = col_index.get("personnel_number")
+        first_name_hint = self._get_cell_value(row, col_index, "first_name").split(" ")[0].strip().lower()
+        middle_name_hint = self._get_cell_value(row, col_index, "middle_name").split(" ")[0].strip().lower()
+
+        for idx, raw in enumerate(row):
+            if idx == personnel_idx:
+                continue
+            text = self._to_text(raw)
+            if not self._looks_like_name_value(text):
+                continue
+            words = [w for w in text.split() if w]
+            if len(words) < 2:
+                continue
+            lowered_words = [w.lower() for w in words]
+            # Если есть подсказки из отдельных колонок имени/отчества, убеждаемся, что кандидат их содержит.
+            if first_name_hint and first_name_hint not in lowered_words:
+                continue
+            if middle_name_hint and middle_name_hint not in lowered_words:
+                continue
+            score = self._name_quality(text)
+            if score > best_score:
+                best_name = text
+                best_score = score
+
+        return best_name
+
+    def _is_better_full_name(self, incoming_name, current_name):
+        """Определяет, стоит ли заменять текущее ФИО новым."""
+        incoming_name = (incoming_name or "").strip()
+        current_name = (current_name or "").strip()
+        if not incoming_name:
+            return False
+        if not current_name:
+            return True
+        incoming_is_name = self._looks_like_person_full_name(incoming_name)
+        current_is_name = self._looks_like_person_full_name(current_name)
+
+        # Если текущее значение похоже на должность, а новое — на ФИО, заменяем.
+        if incoming_is_name and not current_is_name:
+            return True
+        if not incoming_is_name and current_is_name:
+            return False
+
+        return self._name_quality(incoming_name) > self._name_quality(current_name)
+
+    def _select_best_sheet(self, workbook):
+        """
+        Выбирает лучший лист для импорта по качеству найденных заголовков.
+        Это критично для файлов, где Лист1 имеет неполные заголовки.
+        """
+        best_ws = None
+        best_score = -1
+        best_rows = -1
+
+        for sheet_name in workbook.sheetnames:
+            ws = workbook[sheet_name]
+            if ws.max_row < 2:
+                continue
+
+            max_header_search = min(10, ws.max_row)
+            sheet_score = 0
+            for i in range(1, max_header_search + 1):
+                row = [cell.value for cell in ws[i]]
+                idx_map = self._build_column_index(row)
+                if i < max_header_search:
+                    next_row = [cell.value for cell in ws[i + 1]]
+                    next_map = self._build_column_index(next_row)
+                    for key, value in next_map.items():
+                        if key not in idx_map:
+                            idx_map[key] = value
+
+                score = 0
+                if "personnel_number" in idx_map:
+                    score += 4
+                if "full_name" in idx_map:
+                    score += 4
+                if "last_name" in idx_map and "first_name" in idx_map:
+                    score += 3
+                if "position" in idx_map:
+                    score += 1
+                if "union_date" in idx_map:
+                    score += 1
+                if score > sheet_score:
+                    sheet_score = score
+
+            if (
+                sheet_score > best_score
+                or (sheet_score == best_score and ws.max_row > best_rows)
+            ):
+                best_ws = ws
+                best_score = sheet_score
+                best_rows = ws.max_row
+
+        return best_ws
+
+    def _merge_worker_fields(self, worker, incoming_fields, user):
+        """
+        Безопасное обновление: не затираем заполненные поля пустыми значениями,
+        а только дополняем недостающую информацию.
+        """
+        changed = False
+
+        incoming_name = (incoming_fields.get("full_name") or "").strip()
+        current_name = (worker.full_name or "").strip()
+        if self._is_better_full_name(incoming_name, current_name):
+            worker.full_name = incoming_name
+            changed = True
+
+        incoming_inn = ''.join(ch for ch in str(incoming_fields.get("inn") or "") if ch.isdigit())
+        current_inn = ''.join(ch for ch in str(worker.inn or "") if ch.isdigit())
+        if len(incoming_inn) == 12 and len(current_inn) != 12:
+            worker.inn = incoming_inn
+            changed = True
+
+        for field in ("department", "position", "phone", "address"):
+            incoming_value = (incoming_fields.get(field) or "").strip()
+            current_value = (getattr(worker, field) or "").strip()
+            if incoming_value and not current_value:
+                setattr(worker, field, incoming_value)
+                changed = True
+
+        # Статус можно только повышать до пенсионера, обратно не откатываем.
+        if incoming_fields.get("status") == "pensioner" and worker.status != "pensioner":
+            worker.status = "pensioner"
+            changed = True
+
+        # Флаги членства обновляем только в сторону True.
+        if incoming_fields.get("is_union_member") and not worker.is_union_member:
+            worker.is_union_member = True
+            changed = True
+        if incoming_fields.get("is_contract_member") and not worker.is_contract_member:
+            worker.is_contract_member = True
+            changed = True
+
+        if not worker.user_id:
+            worker.user = user
+            changed = True
+
+        return changed
+
     def _import_from_excel(self, path: Path, user: User):
         """Импортирует работников из Excel файла"""
         try:
@@ -301,22 +533,8 @@ class Command(BaseCommand):
             )
             return 0, 0
 
-        # Ищем подходящий лист (обычно Лист1 содержит данные)
-        ws = None
-        # Сначала пробуем Лист1
-        if "Лист1" in wb.sheetnames:
-            candidate_ws = wb["Лист1"]
-            if candidate_ws.max_row >= 2:
-                ws = candidate_ws
-        
-        # Если Лист1 не подошел, ищем другие листы
-        if not ws:
-            for sheet_name in wb.sheetnames:
-                candidate_ws = wb[sheet_name]
-                # Проверяем, есть ли в листе данные (хотя бы 2 строки)
-                if candidate_ws.max_row >= 2:
-                    ws = candidate_ws
-                    break
+        # Выбираем наиболее корректный лист по качеству заголовков.
+        ws = self._select_best_sheet(wb)
 
         if not ws:
             self.stdout.write(
@@ -478,7 +696,7 @@ class Command(BaseCommand):
             if len(row) < 2:
                 continue
 
-            # Получаем данные из строки
+            # Получаем/собираем ФИО. Если заголовки кривые, пытаемся восстановить ФИО по содержимому строки.
             has_full = "full_name" in col_index
             if has_full:
                 full_name = self._get_cell_value(row, col_index, "full_name")
@@ -486,9 +704,21 @@ class Command(BaseCommand):
                 last_name = self._get_cell_value(row, col_index, "last_name")
                 first_name = self._get_cell_value(row, col_index, "first_name")
                 middle_name = self._get_cell_value(row, col_index, "middle_name")
-                full_name = " ".join(
-                    part for part in [last_name, first_name, middle_name] if part
-                ).strip()
+
+                # Частый кейс: у колонки "фамилия" пустой заголовок, но она стоит перед "имя".
+                if not last_name and "first_name" in col_index:
+                    first_name_idx = col_index.get("first_name")
+                    if isinstance(first_name_idx, int) and first_name_idx > 0 and first_name_idx - 1 < len(row):
+                        candidate_last_name = self._to_text(row[first_name_idx - 1])
+                        if self._looks_like_name_value(candidate_last_name):
+                            last_name = candidate_last_name
+
+                full_name = " ".join(part for part in [last_name, first_name, middle_name] if part).strip()
+
+            # Если собралось неполное ФИО, пытаемся взять лучший вариант из неразмеченных колонок.
+            guessed_full_name = self._guess_full_name_from_row(row, col_index)
+            if self._is_better_full_name(guessed_full_name, full_name):
+                full_name = guessed_full_name
 
             # Получаем табельный номер напрямую из ячейки, чтобы сохранить точность
             personnel_number = ""
@@ -572,6 +802,8 @@ class Command(BaseCommand):
                                 except (ValueError, TypeError):
                                     pass
 
+            personnel_number = self._normalize_personnel_number(personnel_number)
+
             # Пропускаем пустые строки (нужен хотя бы табельный номер или ФИО)
             if not full_name and not personnel_number:
                 continue
@@ -611,13 +843,31 @@ class Command(BaseCommand):
                 "address": address or "",
             }
 
-            worker, was_created = Worker.objects.update_or_create(
-                user=user,
-                personnel_number=personnel_number,
-                defaults=worker_defaults,
-            )
+            # Обновляем существующего работника только дополнением пустых полей,
+            # не перезаписывая заполненные значения пустыми из файла.
+            worker = Worker.objects.filter(user=user, personnel_number=personnel_number).first()
 
-            if was_created:
+            # Если есть "осиротевшая" запись без привязки к пользователю, забираем ее вместо создания дубля.
+            if not worker:
+                orphan_worker = Worker.objects.filter(user__isnull=True, personnel_number=personnel_number).first()
+                if orphan_worker:
+                    worker = orphan_worker
+                    worker.user = user
+
+            if not worker:
+                worker = Worker.objects.create(
+                    user=user,
+                    personnel_number=personnel_number,
+                    full_name=(worker_defaults.get("full_name") or "").strip(),
+                    inn=''.join(ch for ch in str(worker_defaults.get("inn") or "") if ch.isdigit())[:12],
+                    status=worker_defaults.get("status") or "worker",
+                    is_union_member=bool(worker_defaults.get("is_union_member")),
+                    department=(worker_defaults.get("department") or "").strip(),
+                    position=(worker_defaults.get("position") or "").strip(),
+                    is_contract_member=bool(worker_defaults.get("is_contract_member")),
+                    phone=(worker_defaults.get("phone") or "").strip(),
+                    address=(worker_defaults.get("address") or "").strip(),
+                )
                 total_created += 1
                 self.stdout.write(
                     self.style.SUCCESS(
@@ -625,11 +875,14 @@ class Command(BaseCommand):
                     )
                 )
             else:
-                total_updated += 1
-                self.stdout.write(
-                    self.style.WARNING(
-                        f"  ↻ Обновлен работник {worker.full_name} ({personnel_number})"
+                changed = self._merge_worker_fields(worker, worker_defaults, user)
+                if changed:
+                    worker.save()
+                    total_updated += 1
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f"  ↻ Обновлен работник {worker.full_name} ({personnel_number})"
+                        )
                     )
-                )
 
         return total_created, total_updated

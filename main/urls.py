@@ -76,10 +76,15 @@ urlpatterns = [
     # API: единое действие "Отказать"
     path('api/vacation-request/<int:request_id>/reject/', views.reject_vacation_request, name='reject_vacation_request'),
     path('api/vacation-request/<int:request_id>/edit/', views.edit_vacation_request, name='edit_vacation_request'),
+    path('api/material-assistance/<int:request_id>/edit/', views.edit_material_assistance_request, name='edit_material_assistance_request'),
+    path('api/coal-request/<int:request_id>/edit/', views.edit_coal_request, name='edit_coal_request'),
+    path('api/funeral-request/<int:request_id>/edit/', views.edit_funeral_request, name='edit_funeral_request'),
     path('api/material-assistance/<int:request_id>/reject/', views.reject_material_assistance_request, name='reject_material_assistance_request'),
     path('api/coal-request/<int:request_id>/reject/', views.reject_coal_request, name='reject_coal_request'),
     path('api/funeral-request/<int:request_id>/reject/', views.reject_funeral_request, name='reject_funeral_request'),
     # API: удаление заявлений в кабинете
     path('api/vacation-request/<int:request_id>/delete/', views.delete_vacation_request, name='delete_vacation_request'),
     path('api/coal-request/<int:request_id>/delete/', views.delete_coal_request, name='delete_coal_request'),
+    path('api/material-assistance/<int:request_id>/delete/', views.delete_material_assistance_request, name='delete_material_assistance_request'),
+    path('api/funeral-request/<int:request_id>/delete/', views.delete_funeral_request, name='delete_funeral_request'),
 ]

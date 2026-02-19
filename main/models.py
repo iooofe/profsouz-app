@@ -3,6 +3,7 @@ from django.core.validators import RegexValidator
 from django.contrib.auth.models import User
 from django.db.models import Q
 from datetime import date
+import calendar
 
 
 def validate_phone_kz(value):
@@ -85,6 +86,7 @@ class Worker(models.Model):
     current_account = models.CharField('Текущий счет (KZ + 18 цифр)', max_length=25, blank=True)
     # Поля для заявления на погребение
     is_dead = models.BooleanField('Пенсионер мертв?', choices=YES_NO_CHOICES, default=False, null=True, blank=True)
+    death_date = models.DateField('Дата смерти пенсионера', null=True, blank=True)
     death_certificate_file = models.FileField('Справка о смерти', upload_to='funeral/death_certificates/', null=True, blank=True)
     # Поля для списка на доплату за 3 степени (хранятся по периодам)
     bonus_accrued = models.DecimalField('Начислено (доплата 3 степени)', max_digits=10, decimal_places=2, null=True, blank=True)
@@ -447,7 +449,7 @@ class VacationLimit(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='vacation_limits', verbose_name='Пользователь')
     resort = models.CharField('Курорт', max_length=50, choices=RESORT_CHOICES, default='zhartas')
     limit = models.PositiveIntegerField('Лимит', default=0)
-    period_start = models.DateField('Начало периода (18 число месяца)')
+    period_start = models.DateField('Начало периода')
     created_at = models.DateTimeField('Дата создания', auto_now_add=True)
     updated_at = models.DateTimeField('Дата обновления', auto_now=True)
     is_initial = models.BooleanField('Первоначальная установка', default=True)
@@ -463,22 +465,16 @@ class VacationLimit(models.Model):
     
     @staticmethod
     def get_current_period_start():
-        """Возвращает дату начала текущего периода (18 число текущего месяца)"""
+        """Возвращает дату начала текущего периода (1 число текущего месяца)."""
         from django.utils import timezone
-        from datetime import date
-        
         today = timezone.now().date()
-        # Если сегодня до 18 числа, период начался 18 числа прошлого месяца
-        if today.day < 18:
-            if today.month == 1:
-                period_start = date(today.year - 1, 12, 18)
-            else:
-                period_start = date(today.year, today.month - 1, 18)
-        else:
-            # Если сегодня 18 или позже, период начался 18 числа текущего месяца
-            period_start = date(today.year, today.month, 18)
-        
-        return period_start
+        return date(today.year, today.month, 1)
+
+    @staticmethod
+    def get_period_end(period_start):
+        """Возвращает дату конца периода (30 число того же месяца, либо последний день месяца)."""
+        last_day = calendar.monthrange(period_start.year, period_start.month)[1]
+        return date(period_start.year, period_start.month, min(30, last_day))
     
     @staticmethod
     def get_or_create_limit(user, resort='zhartas'):
@@ -495,11 +491,7 @@ class VacationLimit(models.Model):
     def get_used_places(self):
         """Возвращает количество использованных мест в текущем периоде для данного курорта"""
         period_start = self.period_start
-        # Период заканчивается 17 числа следующего месяца
-        if period_start.month == 12:
-            period_end = date(period_start.year + 1, 1, 17)
-        else:
-            period_end = date(period_start.year, period_start.month + 1, 17)
+        period_end = VacationLimit.get_period_end(period_start)
         
         # Получаем все неотмененные заявления в этом периоде для данного курорта
         requests = VacationRequest.objects.filter(
@@ -534,8 +526,8 @@ class Statement(models.Model):
     ]
     
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='statements', verbose_name='Пользователь')
-    period_start = models.DateField('Начало периода (20 число месяца)')
-    period_end = models.DateField('Конец периода (19 число следующего месяца)')
+    period_start = models.DateField('Начало периода')
+    period_end = models.DateField('Конец периода')
     resort = models.CharField('Курорт', max_length=50, default='zhartas')
     status = models.CharField('Статус', max_length=10, choices=STATUS_CHOICES, default='active')
     created_at = models.DateTimeField('Дата создания', auto_now_add=True)

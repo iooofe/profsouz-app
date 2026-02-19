@@ -1,6 +1,7 @@
 import json
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+import calendar
 
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
@@ -89,27 +90,14 @@ def _datetime_human(value):
 
 
 def _period_end_from_start(period_start):
-    if period_start.month == 12:
-        return date(period_start.year + 1, 1, 19)
-    return date(period_start.year, period_start.month + 1, 19)
+    last_day = calendar.monthrange(period_start.year, period_start.month)[1]
+    return date(period_start.year, period_start.month, min(30, last_day))
 
 
 def _get_statement_period():
     today = timezone.now().date()
-    if today.day < 20:
-        if today.month == 1:
-            period_start = date(today.year - 1, 12, 20)
-            period_end = date(today.year, 1, 19)
-        else:
-            period_start = date(today.year, today.month - 1, 20)
-            period_end = date(today.year, today.month, 19)
-    else:
-        if today.month == 12:
-            period_start = date(today.year, 12, 20)
-            period_end = date(today.year + 1, 1, 19)
-        else:
-            period_start = date(today.year, today.month, 20)
-            period_end = date(today.year, today.month + 1, 19)
+    period_start = date(today.year, today.month, 1)
+    period_end = _period_end_from_start(period_start)
     return period_start, period_end
 
 
@@ -156,6 +144,8 @@ def _serialize_worker(worker, include_family=False):
         'account_20_digit': worker.account_20_digit or '',
         'current_account': worker.current_account or '',
         'is_dead': bool(worker.is_dead),
+        'death_date': _date_iso(worker.death_date),
+        'death_date_display': _date_human(worker.death_date),
         'created_at': _datetime_human(worker.created_at),
         'updated_at': _datetime_human(worker.updated_at),
         'user_id': worker.user.id if worker.user else None,
@@ -261,9 +251,51 @@ def _request_scope_for_user(user, model, request_id):
     return get_object_or_404(model, id=request_id, worker__user=user)
 
 
-def _serialize_vacation_request(item):
-    # Используем расчетную цену, чтобы не падать на некорректных legacy-значениях price в БД.
+def _vacation_effective_price(item):
+    """Возвращает итоговую стоимость путевки: сохраненную (если валидна) или расчетную."""
     calculated_price = item.calculate_price()
+    try:
+        stored_price = item.price
+    except Exception:
+        stored_price = None
+
+    if stored_price is None:
+        return calculated_price
+
+    try:
+        return stored_price if stored_price > 0 else calculated_price
+    except Exception:
+        return calculated_price
+
+
+def _parse_optional_custom_price(raw, resort):
+    value = (raw or '').strip()
+    if not value:
+        return None
+    if resort not in ('zhartas', 'shakhter'):
+        raise ValueError('Ручная цена доступна только для курортов Жартас и Шахтер')
+    try:
+        parsed = Decimal(value.replace(',', '.'))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError('Некорректная цена путевки')
+    if parsed <= 0:
+        raise ValueError('Цена путевки должна быть больше 0')
+    return parsed
+
+
+def _serialize_vacation_request(item):
+    effective_price = _vacation_effective_price(item)
+    calculated_price = item.calculate_price()
+    try:
+        stored_price = item.price
+    except Exception:
+        stored_price = None
+    is_custom_price = (
+        item.resort in ('zhartas', 'shakhter')
+        and stored_price is not None
+        and calculated_price is not None
+        and stored_price != calculated_price
+    )
     return {
         'id': item.id,
         'type': 'vacation',
@@ -279,7 +311,8 @@ def _serialize_vacation_request(item):
         'request_status': item.request_status,
         'created_at': _datetime_human(item.created_at),
         'created_at_iso': item.created_at.isoformat(),
-        'price': float(calculated_price) if calculated_price is not None else None,
+        'price': float(effective_price) if effective_price is not None else None,
+        'price_is_custom': bool(is_custom_price),
         'places_count': item.get_places_count(),
         'worker_goes': bool(getattr(item, 'worker_goes', True)),
         'family_members_count': item.family_members.count(),
@@ -690,6 +723,7 @@ def api_create_vacation_request(request):
     resort = (source.get('resort') or '').strip()
     start_date_str = source.get('start_date')
     end_date_str = source.get('end_date')
+    custom_price_raw = source.get('custom_price')
 
     if not resort:
         return _api_error('Не выбран курорт')
@@ -725,6 +759,11 @@ def api_create_vacation_request(request):
     trip_days = (end_date - start_date).days + 1
     if trip_days > 31:
         return _api_error('Длительность путевки не может превышать 31 день')
+
+    try:
+        custom_price = _parse_optional_custom_price(custom_price_raw, resort)
+    except ValueError as exc:
+        return _api_error(str(exc))
 
     family_member_ids = _parse_ids(source.get('family_members'))
     worker_goes = _parse_bool(source.get('worker_goes', True))
@@ -773,8 +812,9 @@ def api_create_vacation_request(request):
         vacation.family_members.set(family_members)
 
     calculated = vacation.calculate_price()
-    if calculated:
-        vacation.price = calculated
+    final_price = custom_price if custom_price is not None else calculated
+    if final_price is not None:
+        vacation.price = final_price
         vacation.save(update_fields=['price', 'updated_at'])
 
     return JsonResponse({
@@ -999,6 +1039,7 @@ def api_create_funeral_request(request):
     applicant_inn = ''.join(c for c in (source.get('applicant_inn') or '') if c.isdigit())
     account_type = source.get('account_type')
     account_number = (source.get('account_number') or '').strip()
+    death_date_raw = (source.get('death_date') or '').strip()
 
     if not applicant_full_name:
         return _api_error('Не указано ФИО заявителя')
@@ -1015,9 +1056,24 @@ def api_create_funeral_request(request):
     if not account_number[2:].isdigit():
         return _api_error('После KZ должны быть только цифры')
 
+    death_date = None
+    if death_date_raw:
+        try:
+            death_date = datetime.strptime(death_date_raw, '%Y-%m-%d').date()
+        except ValueError:
+            return _api_error('Некорректная дата смерти пенсионера')
+        if death_date > date.today():
+            return _api_error('Дата смерти не может быть в будущем')
+
     with transaction.atomic():
+        should_update_worker = False
         if request.FILES.get('death_certificate_file'):
             worker.death_certificate_file = request.FILES['death_certificate_file']
+            should_update_worker = True
+        if death_date:
+            worker.death_date = death_date
+            should_update_worker = True
+        if should_update_worker:
             worker.is_dead = True
             worker.save()
 
@@ -1111,12 +1167,24 @@ def api_vacation_limits(request):
 @require_http_methods(['GET'])
 def api_reports(request):
     user_is_admin = is_admin(request.user)
+    selected_user_id = request.GET.get('user_id')
+    selected_user_id_int = None
+    if user_is_admin and selected_user_id:
+        try:
+            selected_user_id_int = int(selected_user_id)
+        except (TypeError, ValueError):
+            selected_user_id_int = None
 
     if user_is_admin:
         vacation = VacationRequest.objects.all().select_related('worker', 'user').prefetch_related('family_members').defer('price')
         material = MaterialAssistanceRequest.objects.all().select_related('worker', 'user')
         coal = CoalRequest.objects.all().select_related('worker', 'user')
         funeral = FuneralRequest.objects.all().select_related('worker', 'user')
+        if selected_user_id_int:
+            vacation = vacation.filter(user_id=selected_user_id_int)
+            material = material.filter(user_id=selected_user_id_int)
+            coal = coal.filter(user_id=selected_user_id_int)
+            funeral = funeral.filter(user_id=selected_user_id_int)
     else:
         vacation = VacationRequest.objects.filter(worker__user=request.user).select_related('worker', 'user').prefetch_related('family_members').defer('price')
         material = MaterialAssistanceRequest.objects.filter(worker__user=request.user).select_related('worker', 'user')
@@ -1155,14 +1223,14 @@ def api_statements(request):
             start_date__gte=period_start,
             start_date__lte=period_end,
             is_rejected=False,
-        ).select_related('worker', 'user').prefetch_related('family_members').order_by('worker__full_name')
+        ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
 
         shakhter_qs = VacationRequest.objects.filter(
             resort='shakhter',
             start_date__gte=period_start,
             start_date__lte=period_end,
             is_rejected=False,
-        ).select_related('worker', 'user').prefetch_related('family_members').order_by('worker__full_name')
+        ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     else:
         zhartas_qs = VacationRequest.objects.filter(
             user=request.user,
@@ -1170,7 +1238,7 @@ def api_statements(request):
             start_date__gte=period_start,
             start_date__lte=period_end,
             is_rejected=False,
-        ).select_related('worker').prefetch_related('family_members').order_by('worker__full_name')
+        ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
 
         shakhter_qs = VacationRequest.objects.filter(
             user=request.user,
@@ -1178,14 +1246,18 @@ def api_statements(request):
             start_date__gte=period_start,
             start_date__lte=period_end,
             is_rejected=False,
-        ).select_related('worker').prefetch_related('family_members').order_by('worker__full_name')
+        ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
 
     zhartas_rows = []
     zhartas_total = 0.0
     for idx, vacation in enumerate(zhartas_qs, 1):
         vouchers = vacation.get_places_count()
         bed_days = vouchers * vacation.get_duration_days()
-        price = float(vacation.price) if vacation.price else 0.0
+        effective_price = _vacation_effective_price(vacation)
+        try:
+            price = float(effective_price) if effective_price is not None else 0.0
+        except (TypeError, ValueError, InvalidOperation):
+            price = 0.0
         zhartas_total += price
         zhartas_rows.append({
             'number': idx,
@@ -1204,7 +1276,11 @@ def api_statements(request):
     for idx, vacation in enumerate(shakhter_qs, 1):
         vouchers = vacation.get_places_count()
         bed_days = vouchers * vacation.get_duration_days()
-        price = float(vacation.price) if vacation.price else 0.0
+        effective_price = _vacation_effective_price(vacation)
+        try:
+            price = float(effective_price) if effective_price is not None else 0.0
+        except (TypeError, ValueError, InvalidOperation):
+            price = 0.0
         shakhter_total += price
         shakhter_rows.append({
             'number': idx,
@@ -1245,13 +1321,7 @@ def api_statements(request):
     for d in period_candidates:
         if not d:
             continue
-        if d.day >= 20:
-            normalized_periods.add(date(d.year, d.month, 20))
-        else:
-            if d.month == 1:
-                normalized_periods.add(date(d.year - 1, 12, 20))
-            else:
-                normalized_periods.add(date(d.year, d.month - 1, 20))
+        normalized_periods.add(date(d.year, d.month, 1))
 
     normalized_periods.add(period_start)
     all_periods = sorted(list(normalized_periods), reverse=True)

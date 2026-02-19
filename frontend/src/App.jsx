@@ -48,6 +48,7 @@ const EMPTY_WORKER_FORM = {
   account_20_digit: '',
   current_account: '',
   is_dead: 'false',
+  death_date: '',
   user_id: '',
   family_members: [],
   files: {
@@ -58,6 +59,26 @@ const EMPTY_WORKER_FORM = {
     death_certificate_file: null,
   },
 };
+
+const RESORT_OPTIONS = [
+  { value: 'orlenok', label: 'ДОЦ "Орленок"' },
+  { value: 'zhartas', label: 'Санаторий "Жартас"' },
+  { value: 'balkhash', label: 'Санаторий "Балхаш"' },
+  { value: 'discovery', label: '"Дискавери"' },
+  { value: 'shakhter', label: 'Дом отдыха "Шахтер"' },
+];
+
+const ACCOUNT_TYPE_OPTIONS = [
+  { value: '20_digit', label: 'Карточный счет' },
+  { value: 'current', label: 'Текущий счет' },
+];
+
+const ASSISTANCE_TYPE_OPTIONS = [
+  { value: 'sick_leave', label: 'Больничный лист' },
+  { value: 'childbirth', label: 'Рождение ребенка' },
+  { value: 'funeral', label: 'Погребение близких родственников' },
+  { value: 'treatment', label: 'На лечение' },
+];
 
 function cn(...parts) {
   return parts.filter(Boolean).join(' ');
@@ -75,6 +96,17 @@ function formatMoney(value) {
   const n = Number(value);
   if (Number.isNaN(n)) return String(value);
   return n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function triggerDownload(url) {
+  if (!url) return;
+  const iframe = document.createElement('iframe');
+  iframe.style.display = 'none';
+  iframe.src = url;
+  document.body.appendChild(iframe);
+  window.setTimeout(() => {
+    iframe.remove();
+  }, 60_000);
 }
 
 function toBooleanString(value) {
@@ -117,6 +149,7 @@ function buildWorkerFormData(formState) {
   fd.append('account_20_digit', formState.account_20_digit || '');
   fd.append('current_account', formState.current_account || '');
   fd.append('is_dead', formState.is_dead === 'true' ? 'True' : 'False');
+  fd.append('death_date', formState.death_date || '');
 
   if (formState.user_id) {
     fd.append('user_id', formState.user_id);
@@ -369,9 +402,9 @@ function Shell({ user, references, onLogout, onRefreshReference }) {
             <WorkersTab user={user} references={references} onRefreshReference={onRefreshReference} />
           )}
           {activeTab === 'applications' && <ApplicationsTab user={user} />}
-          {activeTab === 'reports' && <ReportsTab user={user} />}
+          {activeTab === 'reports' && <ReportsTab user={user} references={references} />}
           {activeTab === 'statements' && <StatementsTab />}
-          {activeTab === 'lists' && <ListsTab user={user} />}
+          {activeTab === 'lists' && <ListsTab user={user} references={references} />}
         </section>
       </main>
     </div>
@@ -516,6 +549,7 @@ function WorkersTab({ user, references, onRefreshReference }) {
         account_20_digit: worker.account_20_digit || '',
         current_account: worker.current_account || '',
         is_dead: toBooleanString(worker.is_dead),
+        death_date: worker.death_date || '',
         user_id: worker.user_id ? String(worker.user_id) : '',
         family_members: worker.family_members || [],
         files: {
@@ -879,6 +913,14 @@ function WorkersTab({ user, references, onRefreshReference }) {
                   <option value="true">Да</option>
                 </select>
               </label>
+              <label>
+                Дата смерти
+                <input
+                  type="date"
+                  value={formState.death_date}
+                  onChange={(e) => setFormState((prev) => ({ ...prev, death_date: e.target.value }))}
+                />
+              </label>
 
               {user.is_admin && (
                 <label>
@@ -1144,6 +1186,7 @@ function ApplicationsTab({ user }) {
     worker_goes: true,
     family_members: [],
     seasons: [],
+    custom_price: '',
     study_certificate_file: null,
   });
 
@@ -1169,6 +1212,7 @@ function ApplicationsTab({ user }) {
     applicant_inn: '',
     account_type: '20_digit',
     account_number: '',
+    death_date: '',
     applicant_id_file: null,
     death_certificate_file: null,
   });
@@ -1231,6 +1275,9 @@ function ApplicationsTab({ user }) {
       fd.append('worker_goes', vacationData.worker_goes ? 'true' : 'false');
       fd.append('family_members', JSON.stringify(vacationData.family_members));
       fd.append('seasons', JSON.stringify(vacationData.seasons));
+      if (['zhartas', 'shakhter'].includes(vacationData.resort) && String(vacationData.custom_price || '').trim()) {
+        fd.append('custom_price', String(vacationData.custom_price || '').trim());
+      }
       if (vacationData.study_certificate_file) {
         fd.append('study_certificate_file', vacationData.study_certificate_file);
       }
@@ -1241,9 +1288,7 @@ function ApplicationsTab({ user }) {
       });
 
       showResult('Заявление на путевку создано');
-      if (response.download_url) {
-        window.open(response.download_url, '_blank');
-      }
+      triggerDownload(response.download_url);
     } catch (e) {
       showResult(getErrorText(e), true);
     } finally {
@@ -1272,9 +1317,7 @@ function ApplicationsTab({ user }) {
       });
 
       showResult('Заявление на материальную помощь создано');
-      if (response.download_url) {
-        window.open(response.download_url, '_blank');
-      }
+      triggerDownload(response.download_url);
     } catch (e) {
       showResult(getErrorText(e), true);
     } finally {
@@ -1307,9 +1350,7 @@ function ApplicationsTab({ user }) {
         body: fd,
       });
       showResult('Заявление на уголь создано');
-      if (response.download_url) {
-        window.open(response.download_url, '_blank');
-      }
+      triggerDownload(response.download_url);
     } catch (e) {
       showResult(getErrorText(e), true);
     } finally {
@@ -1332,6 +1373,7 @@ function ApplicationsTab({ user }) {
       fd.append('applicant_inn', funeralData.applicant_inn);
       fd.append('account_type', funeralData.account_type);
       fd.append('account_number', funeralData.account_number);
+      fd.append('death_date', funeralData.death_date);
       if (funeralData.applicant_id_file) {
         fd.append('applicant_id_file', funeralData.applicant_id_file);
       }
@@ -1344,9 +1386,7 @@ function ApplicationsTab({ user }) {
         body: fd,
       });
       showResult('Заявление на погребение создано');
-      if (response.download_url) {
-        window.open(response.download_url, '_blank');
-      }
+      triggerDownload(response.download_url);
     } catch (e) {
       showResult(getErrorText(e), true);
     } finally {
@@ -1470,15 +1510,38 @@ function ApplicationsTab({ user }) {
             Курорт
             <select
               value={vacationData.resort}
-              onChange={(e) => setVacationData((prev) => ({ ...prev, resort: e.target.value }))}
+              onChange={(e) => {
+                const nextResort = e.target.value;
+                setVacationData((prev) => ({
+                  ...prev,
+                  resort: nextResort,
+                  seasons: nextResort === 'orlenok' ? prev.seasons : [],
+                  custom_price: ['zhartas', 'shakhter'].includes(nextResort) ? prev.custom_price : '',
+                }));
+              }}
             >
-              <option value="orlenok">ДОЦ "Орленок"</option>
-              <option value="zhartas">Санаторий "Жартас"</option>
-              <option value="balkhash">Санаторий "Балхаш"</option>
-              <option value="discovery">"Дискавери"</option>
-              <option value="shakhter">Дом отдыха "Шахтер"</option>
+              {RESORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
+
+          {['zhartas', 'shakhter'].includes(vacationData.resort) && (
+            <label>
+              Ручная цена (опционально)
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={vacationData.custom_price}
+                onChange={(e) => setVacationData((prev) => ({ ...prev, custom_price: e.target.value }))}
+                placeholder="Пусто = стандартный расчет"
+              />
+              <span className="field-hint">Если поле пустое, система посчитает стоимость автоматически.</span>
+            </label>
+          )}
 
           <div className="cols-2">
             <label>
@@ -1569,10 +1632,11 @@ function ApplicationsTab({ user }) {
               value={materialData.assistance_type}
               onChange={(e) => setMaterialData((prev) => ({ ...prev, assistance_type: e.target.value }))}
             >
-              <option value="sick_leave">Больничный лист</option>
-              <option value="childbirth">Рождение ребенка</option>
-              <option value="funeral">Погребение близких родственников</option>
-              <option value="treatment">На лечение</option>
+              {ASSISTANCE_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -1582,8 +1646,11 @@ function ApplicationsTab({ user }) {
               value={materialData.account_type}
               onChange={(e) => setMaterialData((prev) => ({ ...prev, account_type: e.target.value }))}
             >
-              <option value="20_digit">Карточный счет</option>
-              <option value="current">Текущий счет</option>
+              {ACCOUNT_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -1627,8 +1694,11 @@ function ApplicationsTab({ user }) {
               value={coalData.account_type}
               onChange={(e) => setCoalData((prev) => ({ ...prev, account_type: e.target.value }))}
             >
-              <option value="20_digit">Карточный счет</option>
-              <option value="current">Текущий счет</option>
+              {ACCOUNT_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -1698,8 +1768,11 @@ function ApplicationsTab({ user }) {
               value={funeralData.account_type}
               onChange={(e) => setFuneralData((prev) => ({ ...prev, account_type: e.target.value }))}
             >
-              <option value="20_digit">Карточный счет</option>
-              <option value="current">Текущий счет</option>
+              {ACCOUNT_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -1710,6 +1783,15 @@ function ApplicationsTab({ user }) {
               onChange={(e) => setFuneralData((prev) => ({ ...prev, account_number: e.target.value }))}
               placeholder="KZ..."
               required
+            />
+          </label>
+
+          <label>
+            Дата смерти пенсионера
+            <input
+              type="date"
+              value={funeralData.death_date}
+              onChange={(e) => setFuneralData((prev) => ({ ...prev, death_date: e.target.value }))}
             />
           </label>
 
@@ -1742,23 +1824,36 @@ function ApplicationsTab({ user }) {
   );
 }
 
-function ReportsTab({ user }) {
+function ReportsTab({ user, references }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [enterpriseFilter, setEnterpriseFilter] = useState('all');
+  const [enterpriseSort, setEnterpriseSort] = useState('default');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [detailData, setDetailData] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState('');
+  const [editData, setEditData] = useState(null);
+  const [workerFamilyOptions, setWorkerFamilyOptions] = useState([]);
 
   const load = async () => {
     setLoading(true);
     setError('');
     try {
-      const response = await apiFetch('/api/v2/reports/');
+      const params = new URLSearchParams();
+      if (user.is_admin && enterpriseFilter !== 'all') {
+        params.set('user_id', enterpriseFilter);
+      }
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const response = await apiFetch(`/api/v2/reports/${query}`);
       setRows(response.results || []);
     } catch (e) {
       setError(getErrorText(e));
@@ -1769,11 +1864,11 @@ function ReportsTab({ user }) {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [enterpriseFilter]);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rows.filter((row) => {
+    const filtered = rows.filter((row) => {
       const typeOk = typeFilter === 'all' || row.type === typeFilter;
       const searchOk =
         !q ||
@@ -1782,11 +1877,26 @@ function ReportsTab({ user }) {
         (row.status_text || '').toLowerCase().includes(q);
       return typeOk && searchOk;
     });
-  }, [rows, search, typeFilter]);
+
+    if (user.is_admin && enterpriseSort !== 'default') {
+      const direction = enterpriseSort === 'owner_desc' ? -1 : 1;
+      filtered.sort((a, b) => {
+        const ownerA = String(a.owner || '').toLowerCase();
+        const ownerB = String(b.owner || '').toLowerCase();
+        const ownerCompare = ownerA.localeCompare(ownerB, 'ru');
+        if (ownerCompare !== 0) {
+          return ownerCompare * direction;
+        }
+        return String(b.created_at_iso || '').localeCompare(String(a.created_at_iso || ''));
+      });
+    }
+
+    return filtered;
+  }, [rows, search, typeFilter, enterpriseSort, user.is_admin]);
 
   useEffect(() => {
     setPage(1);
-  }, [search, typeFilter, pageSize, rows.length]);
+  }, [search, typeFilter, enterpriseSort, pageSize, rows.length]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -1838,7 +1948,9 @@ function ReportsTab({ user }) {
   const deleteReport = async (row) => {
     const endpointMap = {
       vacation: `/api/vacation-request/${row.id}/delete/`,
+      material: `/api/material-assistance/${row.id}/delete/`,
       coal: `/api/coal-request/${row.id}/delete/`,
+      funeral: `/api/funeral-request/${row.id}/delete/`,
     };
 
     const endpoint = endpointMap[row.type];
@@ -1858,6 +1970,183 @@ function ReportsTab({ user }) {
     }
   };
 
+  const closeEditModal = () => {
+    setEditModalOpen(false);
+    setEditLoading(false);
+    setEditSaving(false);
+    setEditData(null);
+    setEditError('');
+    setWorkerFamilyOptions([]);
+  };
+
+  const openEdit = async (row) => {
+    setDetailModalOpen(false);
+    setEditModalOpen(true);
+    setEditLoading(true);
+    setEditSaving(false);
+    setEditError('');
+    setEditData(null);
+    setWorkerFamilyOptions([]);
+
+    try {
+      const detail = await apiFetch(row.detail_url);
+      const prepared = {
+        type: row.type,
+        id: row.id,
+        row,
+        workerName: detail.worker?.full_name || row.worker_name || '',
+        workerId: detail.worker?.id || null,
+        form: {},
+      };
+
+      if (row.type === 'vacation') {
+        prepared.form = {
+          resort: detail.vacation_details?.resort_code || 'zhartas',
+          start_date: detail.vacation_details?.start_date_iso || '',
+          end_date: detail.vacation_details?.end_date_iso || '',
+          worker_goes: detail.vacation_details?.worker_goes !== false,
+          family_members: Array.isArray(detail.selected_family_ids) ? detail.selected_family_ids : [],
+          seasons: Array.isArray(detail.vacation_details?.seasons) ? detail.vacation_details.seasons : [],
+          custom_price: detail.vacation_details?.price_is_custom ? String(detail.vacation_details?.price || '') : '',
+        };
+
+        if (prepared.workerId) {
+          try {
+            const familyResp = await apiFetch(`/api/worker/${prepared.workerId}/family/`);
+            setWorkerFamilyOptions(familyResp.family_members || []);
+          } catch {
+            setWorkerFamilyOptions([]);
+          }
+        }
+      }
+
+      if (row.type === 'material') {
+        prepared.form = {
+          assistance_type: detail.assistance_details?.assistance_type_code || 'sick_leave',
+          amount: detail.assistance_details?.amount !== undefined ? String(detail.assistance_details.amount ?? '') : '',
+          account_type: detail.assistance_details?.account_type_code || '20_digit',
+          account_number: detail.assistance_details?.account_number || '',
+        };
+      }
+
+      if (row.type === 'coal') {
+        prepared.form = {
+          account_type: detail.coal_details?.account_type_code || '20_digit',
+          account_number: detail.coal_details?.account_number || '',
+        };
+      }
+
+      if (row.type === 'funeral') {
+        prepared.form = {
+          applicant_full_name: detail.funeral_details?.applicant_full_name || '',
+          applicant_inn: detail.funeral_details?.applicant_inn || '',
+          account_type: detail.funeral_details?.account_type_code || '20_digit',
+          account_number: detail.funeral_details?.account_number || '',
+          death_date: detail.funeral_details?.death_date_iso || '',
+        };
+      }
+
+      setEditData(prepared);
+    } catch (e) {
+      setEditError(getErrorText(e));
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const updateEditField = (field, value) => {
+    setEditData((prev) => {
+      if (!prev) return prev;
+      return { ...prev, form: { ...prev.form, [field]: value } };
+    });
+  };
+
+  const toggleEditFamily = (id) => {
+    setEditData((prev) => {
+      if (!prev) return prev;
+      const current = prev.form.family_members || [];
+      const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id];
+      return { ...prev, form: { ...prev.form, family_members: next } };
+    });
+  };
+
+  const toggleEditSeason = (season) => {
+    setEditData((prev) => {
+      if (!prev) return prev;
+      const current = prev.form.seasons || [];
+      const next = current.includes(season) ? current.filter((item) => item !== season) : [...current, season];
+      return { ...prev, form: { ...prev.form, seasons: next } };
+    });
+  };
+
+  const submitEdit = async (event) => {
+    event.preventDefault();
+    if (!editData) return;
+
+    const endpointMap = {
+      vacation: `/api/vacation-request/${editData.id}/edit/`,
+      material: `/api/material-assistance/${editData.id}/edit/`,
+      coal: `/api/coal-request/${editData.id}/edit/`,
+      funeral: `/api/funeral-request/${editData.id}/edit/`,
+    };
+    const endpoint = endpointMap[editData.type];
+    if (!endpoint) return;
+
+    let payload = {};
+    if (editData.type === 'vacation') {
+      payload = {
+        resort: editData.form.resort,
+        start_date: editData.form.start_date,
+        end_date: editData.form.end_date,
+        worker_goes: !!editData.form.worker_goes,
+        family_members: editData.form.family_members || [],
+        seasons: editData.form.resort === 'orlenok' ? editData.form.seasons || [] : [],
+      };
+      if (['zhartas', 'shakhter'].includes(editData.form.resort) && String(editData.form.custom_price || '').trim()) {
+        payload.custom_price = String(editData.form.custom_price).trim();
+      }
+    }
+    if (editData.type === 'material') {
+      payload = {
+        assistance_type: editData.form.assistance_type,
+        amount: editData.form.amount,
+        account_type: editData.form.account_type,
+        account_number: editData.form.account_number,
+      };
+    }
+    if (editData.type === 'coal') {
+      payload = {
+        account_type: editData.form.account_type,
+        account_number: editData.form.account_number,
+      };
+    }
+    if (editData.type === 'funeral') {
+      payload = {
+        applicant_full_name: editData.form.applicant_full_name,
+        applicant_inn: editData.form.applicant_inn,
+        account_type: editData.form.account_type,
+        account_number: editData.form.account_number,
+        death_date: editData.form.death_date,
+      };
+    }
+
+    setEditSaving(true);
+    setEditError('');
+    try {
+      await apiFetch(endpoint, { method: 'POST', body: payload });
+      closeEditModal();
+      await load();
+      if (detailData && detailData._id === editData.id && detailData._type === editData.type) {
+        setDetailData(null);
+        setDetailModalOpen(false);
+      }
+    } catch (e) {
+      setEditError(getErrorText(e));
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   const typeLabel = {
     vacation: 'Путевка',
     material: 'Матпомощь',
@@ -1871,6 +2160,8 @@ function ReportsTab({ user }) {
     if (typeof value === 'boolean') return value ? 'Да' : 'Нет';
     return String(value);
   };
+
+  const canEditRow = (row) => row.status !== 'inactive';
 
   const renderDetailGrid = (items) => (
     <div className="report-detail-grid">
@@ -1905,6 +2196,23 @@ function ReportsTab({ user }) {
               <option value="coal">Уголь</option>
               <option value="funeral">Погребение</option>
             </select>
+            {user.is_admin && (
+              <select value={enterpriseFilter} onChange={(e) => setEnterpriseFilter(e.target.value)}>
+                <option value="all">Все предприятия</option>
+                {(references?.users || []).map((item) => (
+                  <option key={item.id} value={String(item.id)}>
+                    {item.username}
+                  </option>
+                ))}
+              </select>
+            )}
+            {user.is_admin && (
+              <select value={enterpriseSort} onChange={(e) => setEnterpriseSort(e.target.value)}>
+                <option value="default">Сортировка: по дате</option>
+                <option value="owner_asc">Предприятие: А-Я</option>
+                <option value="owner_desc">Предприятие: Я-А</option>
+              </select>
+            )}
             <select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
               <option value="10">10 на странице</option>
               <option value="20">20 на странице</option>
@@ -1926,6 +2234,7 @@ function ReportsTab({ user }) {
                 <thead>
                   <tr>
                     <th>Тип</th>
+                    {user.is_admin && <th>Предприятие</th>}
                     <th>Работник</th>
                     <th>Статус</th>
                     <th>Дата</th>
@@ -1936,6 +2245,7 @@ function ReportsTab({ user }) {
                   {pagedRows.map((row) => (
                     <tr key={`${row.type}-${row.id}`}>
                       <td>{typeLabel[row.type] || row.type}</td>
+                      {user.is_admin && <td>{row.owner || '—'}</td>}
                       <td>{row.worker_name}</td>
                       <td>
                         <span className={cn('badge', row.status === 'active' ? 'ok' : row.status === 'pending' ? 'warn' : '')}>
@@ -1944,28 +2254,34 @@ function ReportsTab({ user }) {
                       </td>
                       <td>{row.created_at}</td>
                       <td className="actions-cell">
-                        <button className="btn btn-secondary" onClick={() => loadDetail(row)}>
+                        <button className="btn btn-secondary" onClick={() => loadDetail(row)} title="Детали">
                           <Eye size={13} />
                         </button>
-                        <a className="btn btn-secondary" href={row.download_url} target="_blank" rel="noreferrer">
+                        <a className="btn btn-secondary" href={row.download_url} target="_blank" rel="noreferrer" title="Скачать">
                           <Download size={13} />
                         </a>
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => openEdit(row)}
+                          disabled={!canEditRow(row)}
+                          title={canEditRow(row) ? 'Редактировать' : 'Редактирование недоступно'}
+                        >
+                          Изм.
+                        </button>
                         {user.is_admin && (
                           <button className="btn btn-danger" onClick={() => rejectReport(row)}>
                             Отказать
                           </button>
                         )}
-                        {!user.is_admin && (row.type === 'vacation' || row.type === 'coal') && (
-                          <button className="btn btn-danger" onClick={() => deleteReport(row)}>
-                            Удалить
-                          </button>
-                        )}
+                        <button className="btn btn-danger" onClick={() => deleteReport(row)}>
+                          Удалить
+                        </button>
                       </td>
                     </tr>
                   ))}
                   {filteredRows.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="empty-row">
+                      <td colSpan={user.is_admin ? 6 : 5} className="empty-row">
                         Нет данных
                       </td>
                     </tr>
@@ -2039,6 +2355,7 @@ function ReportsTab({ user }) {
                       { label: 'Телефон', value: detailData.worker?.phone },
                       { label: 'Адрес', value: detailData.worker?.address },
                       { label: 'Умерший', value: detailData.worker?.is_dead },
+                      { label: 'Дата смерти', value: detailData.worker?.death_date },
                     ])}
                   </section>
 
@@ -2054,6 +2371,7 @@ function ReportsTab({ user }) {
                         { label: 'Работник едет', value: detailData.vacation_details.worker_goes },
                         { label: 'Сезоны Орленок', value: detailData.vacation_details.seasons },
                         { label: 'Цена за день', value: detailData.vacation_details.price_per_day, money: true },
+                        { label: 'Ручная цена', value: detailData.vacation_details.price_is_custom ? 'Да' : 'Нет' },
                         { label: 'Итоговая сумма', value: detailData.vacation_details.price, money: true },
                         {
                           label: 'Справка об очном обучении',
@@ -2106,6 +2424,7 @@ function ReportsTab({ user }) {
                         { label: 'ИИН заявителя', value: detailData.funeral_details.applicant_inn },
                         { label: 'Тип счета', value: detailData.funeral_details.account_type },
                         { label: 'Счет', value: detailData.funeral_details.account_number },
+                        { label: 'Дата смерти пенсионера', value: detailData.funeral_details.death_date },
                         { label: 'Статус', value: detailData.funeral_details.status_text },
                         {
                           label: 'Удостоверение личности заявителя',
@@ -2157,35 +2476,310 @@ function ReportsTab({ user }) {
                 </div>
                 <div className="modal-actions">
                   {detailData?._source?.download_url && (
-                    <a
-                      className="btn btn-secondary"
-                      href={detailData._source.download_url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
+                    <a className="btn btn-secondary" href={detailData._source.download_url} target="_blank" rel="noreferrer">
                       <Download size={14} /> Скачать
                     </a>
                   )}
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => openEdit(detailData._source)}
+                    disabled={!canEditRow(detailData._source)}
+                  >
+                    Редактировать
+                  </button>
                   {user.is_admin && (
-                    <button
-                      className="btn btn-danger"
-                      onClick={() => rejectReport(detailData._source)}
-                    >
+                    <button className="btn btn-danger" onClick={() => rejectReport(detailData._source)}>
                       Отказать
                     </button>
                   )}
-                  {!user.is_admin &&
-                    detailData._source &&
-                    (detailData._source.type === 'vacation' || detailData._source.type === 'coal') && (
-                      <button
-                        className="btn btn-danger"
-                        onClick={() => deleteReport(detailData._source)}
-                      >
-                        Удалить
-                      </button>
-                    )}
+                  <button className="btn btn-danger" onClick={() => deleteReport(detailData._source)}>
+                    Удалить
+                  </button>
                 </div>
               </>
+            ) : (
+              <p className="muted">Нет данных</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {editModalOpen && (
+        <div className="modal-overlay" onClick={closeEditModal}>
+          <div className="modal modal-detail" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h3>Редактирование заявления</h3>
+              <button className="icon-btn" onClick={closeEditModal}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {editLoading ? (
+              <div className="center">
+                <Loader2 className="spin" size={20} />
+              </div>
+            ) : editData ? (
+              <form className="form-grid report-edit-form" onSubmit={submitEdit}>
+                <div className="detail-meta">
+                  <span>Тип: {typeLabel[editData.type] || editData.type}</span>
+                  <span>ID: {editData.id}</span>
+                  <span>Работник: {editData.workerName || '—'}</span>
+                </div>
+
+                {editData.type === 'vacation' && (
+                  <>
+                    <label>
+                      Курорт
+                      <select
+                        value={editData.form.resort}
+                        onChange={(e) => {
+                          const nextResort = e.target.value;
+                          setEditData((prev) => {
+                            if (!prev) return prev;
+                            return {
+                              ...prev,
+                              form: {
+                                ...prev.form,
+                                resort: nextResort,
+                                seasons: nextResort === 'orlenok' ? prev.form.seasons : [],
+                                custom_price: ['zhartas', 'shakhter'].includes(nextResort) ? prev.form.custom_price : '',
+                              },
+                            };
+                          });
+                        }}
+                      >
+                        {RESORT_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="cols-2">
+                      <label>
+                        Дата начала
+                        <input
+                          type="date"
+                          value={editData.form.start_date}
+                          onChange={(e) => updateEditField('start_date', e.target.value)}
+                          required
+                        />
+                      </label>
+                      <label>
+                        Дата окончания
+                        <input
+                          type="date"
+                          value={editData.form.end_date}
+                          onChange={(e) => updateEditField('end_date', e.target.value)}
+                          required
+                        />
+                      </label>
+                    </div>
+
+                    <label className="checkbox-line">
+                      <input
+                        type="checkbox"
+                        checked={!!editData.form.worker_goes}
+                        onChange={(e) => updateEditField('worker_goes', e.target.checked)}
+                      />
+                      <span>Работник едет</span>
+                    </label>
+
+                    {editData.form.resort === 'orlenok' && (
+                      <div className="chips-block">
+                        <span>Сезоны:</span>
+                        {[1, 2, 3, 4].map((season) => (
+                          <button
+                            type="button"
+                            key={season}
+                            className={cn('chip', (editData.form.seasons || []).includes(season) && 'chip-active')}
+                            onClick={() => toggleEditSeason(season)}
+                          >
+                            {season}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {['zhartas', 'shakhter'].includes(editData.form.resort) && (
+                      <label>
+                        Ручная цена (опционально)
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={editData.form.custom_price || ''}
+                          onChange={(e) => updateEditField('custom_price', e.target.value)}
+                          placeholder="Пусто = стандартный расчет"
+                        />
+                        <span className="field-hint">Если поле пустое, система посчитает стоимость автоматически.</span>
+                      </label>
+                    )}
+
+                    <div className="family-select">
+                      <span>Члены семьи:</span>
+                      {workerFamilyOptions.length > 0 ? (
+                        workerFamilyOptions.map((member) => (
+                          <label key={member.id} className="checkbox-line">
+                            <input
+                              type="checkbox"
+                              checked={(editData.form.family_members || []).includes(member.id)}
+                              onChange={() => toggleEditFamily(member.id)}
+                            />
+                            <span>
+                              {member.full_name} ({member.relationship})
+                            </span>
+                          </label>
+                        ))
+                      ) : (
+                        <p className="muted">Нет доступных членов семьи</p>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {editData.type === 'material' && (
+                  <>
+                    <label>
+                      Вид помощи
+                      <select
+                        value={editData.form.assistance_type}
+                        onChange={(e) => updateEditField('assistance_type', e.target.value)}
+                      >
+                        {ASSISTANCE_TYPE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Сумма
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={editData.form.amount}
+                        onChange={(e) => updateEditField('amount', e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Тип счета
+                      <select
+                        value={editData.form.account_type}
+                        onChange={(e) => updateEditField('account_type', e.target.value)}
+                      >
+                        {ACCOUNT_TYPE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Номер счета
+                      <input
+                        value={editData.form.account_number}
+                        onChange={(e) => updateEditField('account_number', e.target.value)}
+                        required
+                      />
+                    </label>
+                  </>
+                )}
+
+                {editData.type === 'coal' && (
+                  <>
+                    <label>
+                      Тип счета
+                      <select
+                        value={editData.form.account_type}
+                        onChange={(e) => updateEditField('account_type', e.target.value)}
+                      >
+                        {ACCOUNT_TYPE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Номер счета
+                      <input
+                        value={editData.form.account_number}
+                        onChange={(e) => updateEditField('account_number', e.target.value)}
+                        required
+                      />
+                    </label>
+                  </>
+                )}
+
+                {editData.type === 'funeral' && (
+                  <>
+                    <label>
+                      ФИО заявителя
+                      <input
+                        value={editData.form.applicant_full_name}
+                        onChange={(e) => updateEditField('applicant_full_name', e.target.value)}
+                        required
+                      />
+                    </label>
+                    <label>
+                      ИИН заявителя
+                      <input
+                        value={editData.form.applicant_inn}
+                        onChange={(e) => updateEditField('applicant_inn', e.target.value)}
+                        required
+                      />
+                    </label>
+                    <label>
+                      Тип счета
+                      <select
+                        value={editData.form.account_type}
+                        onChange={(e) => updateEditField('account_type', e.target.value)}
+                      >
+                        {ACCOUNT_TYPE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Номер счета
+                      <input
+                        value={editData.form.account_number}
+                        onChange={(e) => updateEditField('account_number', e.target.value)}
+                        required
+                      />
+                    </label>
+                    <label>
+                      Дата смерти пенсионера
+                      <input
+                        type="date"
+                        value={editData.form.death_date || ''}
+                        onChange={(e) => updateEditField('death_date', e.target.value)}
+                      />
+                    </label>
+                  </>
+                )}
+
+                {editError && <div className="error-banner">{editError}</div>}
+
+                <div className="modal-actions">
+                  <button type="button" className="btn btn-secondary" onClick={closeEditModal}>
+                    Отмена
+                  </button>
+                  <button className="btn btn-primary" type="submit" disabled={editSaving}>
+                    {editSaving ? (
+                      <>
+                        <Loader2 className="spin" size={14} /> Сохранение...
+                      </>
+                    ) : (
+                      'Сохранить'
+                    )}
+                  </button>
+                </div>
+              </form>
             ) : (
               <p className="muted">Нет данных</p>
             )}
@@ -2319,7 +2913,7 @@ function StatementsTab() {
   );
 }
 
-function ListsTab({ user }) {
+function ListsTab({ user, references }) {
   const listConfigs = {
     coal: {
       label: 'Компенсация за уголь',
@@ -2355,9 +2949,13 @@ function ListsTab({ user }) {
 
   const [active, setActive] = useState('coal');
   const [period, setPeriod] = useState('');
+  const [enterpriseFilter, setEnterpriseFilter] = useState('all');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [listSearch, setListSearch] = useState('');
+  const [sortField, setSortField] = useState('number');
+  const [sortDirection, setSortDirection] = useState('asc');
 
   const load = async (targetList = active, targetPeriod = period) => {
     setLoading(true);
@@ -2365,7 +2963,14 @@ function ListsTab({ user }) {
 
     try {
       const conf = listConfigs[targetList];
-      const query = targetPeriod ? `?period_start=${encodeURIComponent(targetPeriod)}` : '';
+      const params = new URLSearchParams();
+      if (targetPeriod) {
+        params.set('period_start', targetPeriod);
+      }
+      if (user.is_admin && enterpriseFilter !== 'all') {
+        params.set('user_id', enterpriseFilter);
+      }
+      const query = params.toString() ? `?${params.toString()}` : '';
       const response = await apiFetch(`${conf.endpoint}${query}`);
       setData(response);
       if (!targetPeriod && response.all_periods?.length > 0) {
@@ -2380,7 +2985,7 @@ function ListsTab({ user }) {
 
   useEffect(() => {
     load(active, '');
-  }, [active]);
+  }, [active, enterpriseFilter]);
 
   useEffect(() => {
     if (period) {
@@ -2389,6 +2994,7 @@ function ListsTab({ user }) {
   }, [period]);
 
   const rows = data ? data[listConfigs[active].rowsKey] || [] : [];
+  const hasIssuedColumn = user.is_admin && (active === 'coal' || active === 'pensioner');
 
   const savePaymentField = async (row, field, value) => {
     if (!user.is_admin) return;
@@ -2556,10 +3162,88 @@ function ListsTab({ user }) {
     ];
   }, [active]);
 
+  const sortRows = (leftValue, rightValue) => {
+    const normalize = (value) => {
+      if (value === null || value === undefined || value === '') return null;
+      if (typeof value === 'number') return value;
+      if (typeof value === 'boolean') return value ? 1 : 0;
+
+      const text = String(value).trim();
+      const dateMatch = text.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+      if (dateMatch) {
+        return new Date(Number(dateMatch[3]), Number(dateMatch[2]) - 1, Number(dateMatch[1])).getTime();
+      }
+
+      const compact = text.replace(/\s+/g, '').replace(',', '.');
+      if (/^-?\d+(\.\d+)?$/.test(compact)) {
+        return Number(compact);
+      }
+
+      return text.toLowerCase();
+    };
+
+    const left = normalize(leftValue);
+    const right = normalize(rightValue);
+
+    if (left === null && right === null) return 0;
+    if (left === null) return 1;
+    if (right === null) return -1;
+
+    let result = 0;
+    if (typeof left === 'number' && typeof right === 'number') {
+      result = left - right;
+    } else {
+      result = String(left).localeCompare(String(right), 'ru');
+    }
+
+    return sortDirection === 'asc' ? result : -result;
+  };
+
+  const visibleRows = useMemo(() => {
+    let filtered = [...rows];
+    const query = listSearch.trim().toLowerCase();
+
+    if (query) {
+      const searchableFields = columns.map(([, field]) => field);
+      filtered = filtered.filter((row) =>
+        searchableFields.some((field) => {
+          const value = row[field];
+          if (value === null || value === undefined) return false;
+          if (typeof value === 'boolean') {
+            const boolText = value ? 'да true' : 'нет false';
+            return boolText.includes(query);
+          }
+          return String(value).toLowerCase().includes(query);
+        })
+      );
+    }
+
+    if (sortField) {
+      filtered.sort((a, b) => sortRows(a[sortField], b[sortField]));
+    }
+    return filtered;
+  }, [rows, listSearch, columns, sortField, sortDirection]);
+
+  const onSortClick = (field) => {
+    if (sortField !== field) {
+      setSortField(field);
+      setSortDirection('asc');
+      return;
+    }
+    setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+  };
+
   const buildExcelUrl = (baseUrl) => {
-    if (!period) return baseUrl;
+    const params = new URLSearchParams();
+    if (period) {
+      params.set('period_start', period);
+    }
+    if (user.is_admin && enterpriseFilter !== 'all') {
+      params.set('user_id', enterpriseFilter);
+    }
+    if (!params.toString()) return baseUrl;
     const separator = baseUrl.includes('?') ? '&' : '?';
-    return `${baseUrl}${separator}period_start=${encodeURIComponent(period)}`;
+    return `${baseUrl}${separator}${params.toString()}`;
   };
 
   return (
@@ -2573,6 +3257,9 @@ function ListsTab({ user }) {
               onClick={() => {
                 setActive(key);
                 setPeriod('');
+                setListSearch('');
+                setSortField('number');
+                setSortDirection('asc');
               }}
             >
               {conf.label}
@@ -2581,6 +3268,24 @@ function ListsTab({ user }) {
         </div>
 
         <div className="right-actions">
+          {user.is_admin && (
+            <select value={enterpriseFilter} onChange={(e) => setEnterpriseFilter(e.target.value)}>
+              <option value="all">Все предприятия (общий)</option>
+              {(references?.users || []).map((item) => (
+                <option key={item.id} value={String(item.id)}>
+                  {item.username}
+                </option>
+              ))}
+            </select>
+          )}
+          <label className="search-field list-search">
+            <Search size={14} />
+            <input
+              value={listSearch}
+              onChange={(e) => setListSearch(e.target.value)}
+              placeholder="Поиск по текущему списку"
+            />
+          </label>
           <select value={period} onChange={(e) => setPeriod(e.target.value)}>
             {(data?.all_periods || []).map((p) => (
               <option key={p} value={p}>
@@ -2621,18 +3326,27 @@ function ListsTab({ user }) {
               <thead>
                 <tr>
                   {columns.map((column) => (
-                    <th key={column[1]}>{column[0]}</th>
+                    <th
+                      key={column[1]}
+                      className={cn('sortable-th', sortField === column[1] && 'sortable-th-active')}
+                      onClick={() => onSortClick(column[1])}
+                    >
+                      {column[0]}
+                      <span className="th-sort">
+                        {sortField === column[1] ? (sortDirection === 'asc' ? '▲' : '▼') : '↕'}
+                      </span>
+                    </th>
                   ))}
-                  {user.is_admin && (active === 'coal' || active === 'pensioner') && <th>Выдано</th>}
+                  {hasIssuedColumn && <th>Выдано</th>}
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, index) => (
+                {visibleRows.map((row, index) => (
                   <tr key={`${active}-${index}-${row.number || row.id || index}`}>
                     {columns.map((column) => (
                       <td key={column[1]}>{renderCell(row, column[1])}</td>
                     ))}
-                    {user.is_admin && (active === 'coal' || active === 'pensioner') && (
+                    {hasIssuedColumn && (
                       <td>
                         <input
                           type="checkbox"
@@ -2643,10 +3357,10 @@ function ListsTab({ user }) {
                     )}
                   </tr>
                 ))}
-                {rows.length === 0 && (
+                {visibleRows.length === 0 && (
                   <tr>
-                    <td colSpan={columns.length + 1} className="empty-row">
-                      Нет данных за период
+                    <td colSpan={columns.length + (hasIssuedColumn ? 1 : 0)} className="empty-row">
+                      {listSearch.trim() ? 'По вашему запросу ничего не найдено' : 'Нет данных за период'}
                     </td>
                   </tr>
                 )}

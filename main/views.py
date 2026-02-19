@@ -10,6 +10,8 @@ import os
 from django.urls import reverse
 from django.utils import timezone
 from datetime import datetime, date
+import calendar
+from decimal import Decimal, InvalidOperation
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
@@ -106,29 +108,73 @@ def logout_view(request):
     return redirect('main:login')
 
 
+def get_period_end_for_start(period_start):
+    """Возвращает конец периода: 30 число текущего месяца (или последний день месяца)."""
+    last_day = calendar.monthrange(period_start.year, period_start.month)[1]
+    return date(period_start.year, period_start.month, min(30, last_day))
+
+
+def normalize_period_start(value):
+    """Нормализует дату к началу периода: 1 число месяца."""
+    return date(value.year, value.month, 1)
+
+
 def get_statement_period():
-    """Получает период ведомости: с 20 числа текущего месяца по 19 число следующего месяца"""
+    """Получает текущий период ведомости: с 1 по 30 число текущего месяца."""
     today = timezone.now().date()
-    
-    # Если сегодня до 20 числа, период - с 20 прошлого месяца по 19 текущего
-    if today.day < 20:
-        # Период: с 20 прошлого месяца по 19 текущего
-        if today.month == 1:
-            period_start = date(today.year - 1, 12, 20)
-            period_end = date(today.year, 1, 19)
-        else:
-            period_start = date(today.year, today.month - 1, 20)
-            period_end = date(today.year, today.month, 19)
-    else:
-        # Период: с 20 текущего месяца по 19 следующего
-        if today.month == 12:
-            period_start = date(today.year, 12, 20)
-            period_end = date(today.year + 1, 1, 19)
-        else:
-            period_start = date(today.year, today.month, 20)
-            period_end = date(today.year, today.month + 1, 19)
-    
-    return period_start, period_end
+    period_start = normalize_period_start(today)
+    return period_start, get_period_end_for_start(period_start)
+
+
+def get_admin_selected_user_id(request):
+    """Возвращает выбранный аккаунт для админских фильтров списков/отчетов."""
+    if not is_admin(request.user):
+        return None
+    raw = (request.GET.get('user_id') or '').strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_optional_custom_price(raw_value, resort):
+    value = (raw_value or '').strip()
+    if not value:
+        return None
+    if resort not in ('zhartas', 'shakhter'):
+        raise ValueError('Ручная цена доступна только для курортов Жартас и Шахтер')
+    try:
+        parsed = Decimal(value.replace(',', '.'))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError('Некорректная цена путевки')
+    if parsed <= 0:
+        raise ValueError('Цена путевки должна быть больше 0')
+    return parsed
+
+
+def get_vacation_effective_price(vacation):
+    """Возвращает сохраненную цену путевки (если валидна), иначе расчетную."""
+    calculated_price = vacation.calculate_price()
+    try:
+        stored_price = vacation.price
+    except Exception:
+        stored_price = None
+    if stored_price is None:
+        return calculated_price
+    try:
+        return stored_price if stored_price > 0 else calculated_price
+    except Exception:
+        return calculated_price
+
+
+def get_vacation_price_float(vacation):
+    effective_price = get_vacation_effective_price(vacation)
+    try:
+        return float(effective_price) if effective_price is not None else 0.0
+    except (TypeError, ValueError, InvalidOperation):
+        return 0.0
 
 
 def get_or_create_statement_for_period(user, period_start, period_end, resort='zhartas'):
@@ -218,13 +264,13 @@ def index(request):
     
     # Получаем заявления для вкладки отчетов
     if user_is_admin:
-        vacation_requests = VacationRequest.objects.all().select_related('worker', 'user').prefetch_related('family_members').order_by('-created_at')
+        vacation_requests = VacationRequest.objects.all().select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('-created_at')
         material_assistance_requests = MaterialAssistanceRequest.objects.all().select_related('worker', 'user').order_by('-created_at')
         coal_requests = CoalRequest.objects.all().select_related('worker', 'user').order_by('-created_at')
         funeral_requests = FuneralRequest.objects.all().select_related('worker', 'user').order_by('-created_at')
     else:
         # Показываем все заявления работников, принадлежащих текущему пользователю
-        vacation_requests = VacationRequest.objects.filter(worker__user=request.user).select_related('worker').prefetch_related('family_members').order_by('-created_at')
+        vacation_requests = VacationRequest.objects.filter(worker__user=request.user).select_related('worker').prefetch_related('family_members').defer('price').order_by('-created_at')
         material_assistance_requests = MaterialAssistanceRequest.objects.filter(worker__user=request.user).select_related('worker').order_by('-created_at')
         coal_requests = CoalRequest.objects.filter(worker__user=request.user).select_related('worker').order_by('-created_at')
         funeral_requests = FuneralRequest.objects.filter(worker__user=request.user).select_related('worker').order_by('-created_at')
@@ -270,10 +316,7 @@ def index(request):
         try:
             period_start = date.fromisoformat(selected_period_start)
             # Вычисляем period_end для выбранного периода
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            period_end = get_period_end_for_start(period_start)
         except (ValueError, TypeError):
             # Если невалидная дата, используем текущий период
             period_start, period_end = get_statement_period()
@@ -294,7 +337,7 @@ def index(request):
             start_date__gte=period_start,
             start_date__lte=period_end,
             is_rejected=False
-        ).select_related('worker', 'user').prefetch_related('family_members').order_by('worker__full_name')
+        ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     else:
         zhartas_vacations = VacationRequest.objects.filter(
             user=request.user,
@@ -302,7 +345,7 @@ def index(request):
             start_date__gte=period_start,
             start_date__lte=period_end,
             is_rejected=False
-        ).select_related('worker').prefetch_related('family_members').order_by('worker__full_name')
+        ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     
     # Подготавливаем данные для таблицы ведомости Жартас
     zhartas_statement_data = []
@@ -311,7 +354,7 @@ def index(request):
         people_count = vacation.get_places_count()
         days = vacation.get_duration_days()
         bed_days = people_count * days
-        price = float(vacation.price) if vacation.price else 0
+        price = get_vacation_price_float(vacation)
         zhartas_total_sum += price
         
         zhartas_statement_data.append({
@@ -339,7 +382,7 @@ def index(request):
             start_date__gte=period_start,
             start_date__lte=period_end,
             is_rejected=False
-        ).select_related('worker', 'user').prefetch_related('family_members').order_by('worker__full_name')
+        ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     else:
         shakhter_vacations = VacationRequest.objects.filter(
             user=request.user,
@@ -347,7 +390,7 @@ def index(request):
             start_date__gte=period_start,
             start_date__lte=period_end,
             is_rejected=False
-        ).select_related('worker').prefetch_related('family_members').order_by('worker__full_name')
+        ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     
     # Подготавливаем данные для таблицы ведомости Шахтер
     shakhter_statement_data = []
@@ -356,7 +399,7 @@ def index(request):
         people_count = vacation.get_places_count()
         days = vacation.get_duration_days()
         bed_days = people_count * days
-        price = float(vacation.price) if vacation.price else 0
+        price = get_vacation_price_float(vacation)
         shakhter_total_sum += price
         
         shakhter_statement_data.append({
@@ -703,6 +746,7 @@ def create_vacation_request(request):
         resort = request.POST.get('resort')
         start_date_str = request.POST.get('start_date')
         end_date_str = request.POST.get('end_date')
+        custom_price_raw = request.POST.get('custom_price', '')
         
         # Проверка: пенсионеры не могут создавать заявления на Балхаш и Дискавери
         if worker.status == 'pensioner' and resort in ['balkhash', 'discovery']:
@@ -756,6 +800,12 @@ def create_vacation_request(request):
         trip_days = (end_date - start_date).days + 1
         if trip_days > 31:
             messages.error(request, 'Длительность путевки не может превышать 31 день!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
+
+        try:
+            custom_price = parse_optional_custom_price(custom_price_raw, resort)
+        except ValueError as exc:
+            messages.error(request, str(exc))
             return redirect(f"{reverse('main:index')}?tab=applications")
         
         # Получаем список выбранных членов семьи (нужно для всех пользователей)
@@ -853,8 +903,9 @@ def create_vacation_request(request):
             
             # Рассчитываем и сохраняем цену
             calculated_price = vacation.calculate_price()
-            if calculated_price:
-                vacation.price = calculated_price
+            final_price = custom_price if custom_price is not None else calculated_price
+            if final_price is not None:
+                vacation.price = final_price
                 vacation.save()
             
             messages.success(request, f'Заявление на путевку для {worker.full_name} успешно создано!')
@@ -872,23 +923,21 @@ def vacation_request_detail(request, request_id):
     """Получение детальной информации о заявлении для модального окна"""
     user_is_admin = is_admin(request.user)
     if user_is_admin:
-        vacation = get_object_or_404(VacationRequest, id=request_id)
+        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id)
     else:
-        vacation = get_object_or_404(VacationRequest, id=request_id, user=request.user)
-    
-    # Пересчитываем цену, если она не установлена (для старых заявлений)
-    if vacation.price is None or vacation.price == 0:
-        calculated_price = vacation.calculate_price()
-        if calculated_price:
-            vacation.price = calculated_price
-            vacation.save()
+        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id, user=request.user)
     
     family_members = vacation.family_members.all()
     
-    # Определяем цену для отображения
-    display_price = None
-    if vacation.price is not None and vacation.price > 0:
-        display_price = float(vacation.price)
+    calculated_price = vacation.calculate_price()
+    effective_price = get_vacation_effective_price(vacation)
+    display_price = float(effective_price) if effective_price is not None else None
+    is_custom_price = (
+        vacation.resort in ('zhartas', 'shakhter')
+        and effective_price is not None
+        and calculated_price is not None
+        and effective_price != calculated_price
+    )
     
     # Генерируем предпросмотр заявления
     preview_html = generate_vacation_request_preview(vacation)
@@ -920,6 +969,7 @@ def vacation_request_detail(request, request_id):
             'status': vacation.get_status(),
             'status_text': vacation.get_status_display_text(),
             'price': display_price,
+            'price_is_custom': bool(is_custom_price),
             'price_per_day': VacationRequest.get_price_per_day(vacation.resort),
             'people_count': vacation.get_places_count(),
             'worker_goes': bool(getattr(vacation, 'worker_goes', True)),
@@ -951,9 +1001,9 @@ def update_vacation_request(request, request_id):
     """Обновление заявления (отказ от поездки)"""
     user_is_admin = is_admin(request.user)
     if user_is_admin:
-        vacation = get_object_or_404(VacationRequest, id=request_id)
+        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id)
     else:
-        vacation = get_object_or_404(VacationRequest, id=request_id, user=request.user)
+        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id, user=request.user)
     
     if request.method == 'POST':
         is_rejected = request.POST.get('is_rejected') == 'true'
@@ -972,9 +1022,9 @@ def edit_vacation_request(request, request_id):
     """Редактирование параметров уже созданного заявления на путёвку"""
     user_is_admin = is_admin(request.user)
     if user_is_admin:
-        vacation = get_object_or_404(VacationRequest, id=request_id)
+        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id)
     else:
-        vacation = get_object_or_404(VacationRequest, id=request_id, worker__user=request.user)
+        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id, worker__user=request.user)
 
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
@@ -999,6 +1049,7 @@ def edit_vacation_request(request, request_id):
     seasons = payload.get('seasons') or []
     worker_goes = payload.get('worker_goes')
     family_member_ids = payload.get('family_members') or []
+    custom_price_raw = payload.get('custom_price')
 
     # Приводим типы
     worker_goes = _parse_bool(worker_goes) if 'worker_goes' in payload else True
@@ -1051,6 +1102,11 @@ def edit_vacation_request(request, request_id):
     if trip_days > 31:
         return JsonResponse({'error': 'Длительность путевки не может превышать 31 день'}, status=400)
 
+    try:
+        custom_price = parse_optional_custom_price(custom_price_raw, resort)
+    except ValueError as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
+
     # Хотя бы один отдыхающий
     if not worker_goes and len(family_member_ids) == 0:
         return JsonResponse({'error': 'Необходимо выбрать хотя бы одного отдыхающего'}, status=400)
@@ -1081,7 +1137,7 @@ def edit_vacation_request(request, request_id):
 
     # Пересчитываем цену
     calculated_price = vacation.calculate_price()
-    vacation.price = calculated_price
+    vacation.price = custom_price if custom_price is not None else calculated_price
     vacation.save()
 
     return JsonResponse({'success': True})
@@ -1093,7 +1149,8 @@ def generate_vacation_request_preview(vacation):
     people_count = vacation.get_places_count()
     resort_name = vacation.get_resort_display()
     start_date_str = vacation.start_date.strftime('%d.%m.%Y')
-    price_str = f"{int(vacation.price)}" if vacation.price else "—"
+    effective_price = get_vacation_effective_price(vacation)
+    price_str = f"{int(effective_price)}" if effective_price else "—"
     
     # Информация об удостоверении личности
     id_info = ''
@@ -1249,7 +1306,8 @@ def generate_vacation_request_docx(vacation):
     people_count = vacation.get_places_count()
     resort_name = vacation.get_resort_display()
     start_date_str = vacation.start_date.strftime('%d.%m.%Y')
-    price_str = f"{int(vacation.price)}" if vacation.price else "—"
+    effective_price = get_vacation_effective_price(vacation)
+    price_str = f"{int(effective_price)}" if effective_price else "—"
     
     # Формируем текст просьбы с учетом сезонов для ДОЦ "Орленок"
     seasons_display = vacation.get_seasons_display()
@@ -1449,7 +1507,7 @@ def generate_vacation_request_docx_standard(vacation):
 @login_required
 def download_vacation_request(request, request_id):
     """Скачивание печатного заявления в Word"""
-    vacation = get_object_or_404(VacationRequest, id=request_id, user=request.user)
+    vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id, user=request.user)
     
     # Выбираем шаблон в зависимости от курорта
     if vacation.resort in ['zhartas', 'shakhter']:
@@ -1477,7 +1535,7 @@ def download_vacation_request(request, request_id):
 @login_required
 def download_study_certificate(request, request_id):
     """Скачивание справки об очном обучении"""
-    vacation = get_object_or_404(VacationRequest, id=request_id, user=request.user)
+    vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id, user=request.user)
     
     if not vacation.study_certificate_file:
         messages.error(request, 'Справка об очном обучении не найдена!')
@@ -1552,10 +1610,7 @@ def generate_zhartas_statement_excel(request):
         try:
             period_start = date.fromisoformat(selected_period_start)
             # Вычисляем period_end для выбранного периода
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            period_end = get_period_end_for_start(period_start)
         except (ValueError, TypeError):
             # Если невалидная дата, используем текущий период
             period_start, period_end = get_statement_period()
@@ -1570,7 +1625,7 @@ def generate_zhartas_statement_excel(request):
             start_date__gte=period_start,
             start_date__lte=period_end,
             is_rejected=False
-        ).select_related('worker', 'user').prefetch_related('family_members').order_by('worker__full_name')
+        ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     else:
         vacations = VacationRequest.objects.filter(
             user=request.user,
@@ -1578,7 +1633,7 @@ def generate_zhartas_statement_excel(request):
             start_date__gte=period_start,
             start_date__lte=period_end,
             is_rejected=False
-        ).select_related('worker').prefetch_related('family_members').order_by('worker__full_name')
+        ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     
     # Создаем Excel файл
     wb = Workbook()
@@ -1644,7 +1699,7 @@ def generate_zhartas_statement_excel(request):
         ws.cell(row=row_num, column=5, value=bed_days).alignment = center_alignment
         
         # Сумма путевки
-        price = float(vacation.price) if vacation.price else 0
+        price = get_vacation_price_float(vacation)
         ws.cell(row=row_num, column=6, value=price).alignment = right_alignment
         ws.cell(row=row_num, column=6).number_format = EXCEL_CURRENCY_FORMAT
         total_sum += price
@@ -1727,10 +1782,7 @@ def generate_shakhter_statement_excel(request):
         try:
             period_start = date.fromisoformat(selected_period_start)
             # Вычисляем period_end для выбранного периода
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            period_end = get_period_end_for_start(period_start)
         except (ValueError, TypeError):
             # Если невалидная дата, используем текущий период
             period_start, period_end = get_statement_period()
@@ -1745,7 +1797,7 @@ def generate_shakhter_statement_excel(request):
             start_date__gte=period_start,
             start_date__lte=period_end,
             is_rejected=False
-        ).select_related('worker', 'user').prefetch_related('family_members').order_by('worker__full_name')
+        ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     else:
         vacations = VacationRequest.objects.filter(
             user=request.user,
@@ -1753,7 +1805,7 @@ def generate_shakhter_statement_excel(request):
             start_date__gte=period_start,
             start_date__lte=period_end,
             is_rejected=False
-        ).select_related('worker').prefetch_related('family_members').order_by('worker__full_name')
+        ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     
     # Создаем Excel файл
     wb = Workbook()
@@ -1820,7 +1872,7 @@ def generate_shakhter_statement_excel(request):
         ws.cell(row=row_num, column=5, value=bed_days).alignment = center_alignment
         
         # Сумма путевки
-        price = float(vacation.price) if vacation.price else 0
+        price = get_vacation_price_float(vacation)
         ws.cell(row=row_num, column=6, value=price).alignment = right_alignment
         ws.cell(row=row_num, column=6).number_format = EXCEL_CURRENCY_FORMAT
         total_sum += price
@@ -2342,8 +2394,10 @@ def material_assistance_detail(request, request_id):
         },
         'assistance_details': {
             'assistance_type': material_assistance.get_assistance_type_display(),
+            'assistance_type_code': material_assistance.assistance_type,
             'amount': float(material_assistance.amount),
             'account_type': material_assistance.get_account_type_display(),
+            'account_type_code': material_assistance.account_type,
             'account_number': display_account_number,
             'status': material_assistance.get_status(),
             'status_text': material_assistance.get_status_display_text(),
@@ -2621,6 +2675,7 @@ def coal_request_detail(request, request_id):
         },
         'coal_details': {
             'account_type': coal_request.get_account_type_display(),
+            'account_type_code': coal_request.account_type,
             'account_number': display_account_number,
             'status': coal_request.get_status(),
             'status_text': coal_request.get_status_display_text(),
@@ -2721,6 +2776,7 @@ def create_funeral_request(request):
         applicant_inn = request.POST.get('applicant_inn', '').strip()
         account_type = request.POST.get('account_type')
         account_number = request.POST.get('account_number', '').strip()
+        death_date_raw = request.POST.get('death_date', '').strip()
         
         # Валидация данных
         if not applicant_full_name:
@@ -2756,12 +2812,29 @@ def create_funeral_request(request):
             if not digits.isdigit() or len(digits) != 18:
                 messages.error(request, 'После KZ должны быть только 18 цифр!')
                 return redirect(f"{reverse('main:index')}?tab=applications")
+
+        death_date = None
+        if death_date_raw:
+            try:
+                death_date = datetime.strptime(death_date_raw, '%Y-%m-%d').date()
+            except ValueError:
+                messages.error(request, 'Некорректная дата смерти пенсионера!')
+                return redirect(f"{reverse('main:index')}?tab=applications")
+            if death_date > date.today():
+                messages.error(request, 'Дата смерти не может быть в будущем!')
+                return redirect(f"{reverse('main:index')}?tab=applications")
         
         # Создаем заявление
         try:
-            # Сохраняем справку о смерти в карточку работника
+            # Сохраняем данные о смерти в карточку работника
+            worker_updated = False
             if 'death_certificate_file' in request.FILES:
                 worker.death_certificate_file = request.FILES['death_certificate_file']
+                worker_updated = True
+            if death_date:
+                worker.death_date = death_date
+                worker_updated = True
+            if worker_updated:
                 worker.is_dead = True  # Помечаем пенсионера как мертвого
                 worker.save()
             
@@ -2891,12 +2964,16 @@ def funeral_request_detail(request, request_id):
             'phone': funeral_request.worker.phone or '—',
             'address': funeral_request.worker.address or '—',
             'is_dead': 'Да' if funeral_request.worker.is_dead else 'Нет',
+            'death_date': funeral_request.worker.death_date.strftime('%d.%m.%Y') if funeral_request.worker.death_date else '—',
         },
         'funeral_details': {
             'applicant_full_name': funeral_request.applicant_full_name,
             'applicant_inn': funeral_request.applicant_inn,
             'account_type': funeral_request.get_account_type_display(),
+            'account_type_code': funeral_request.account_type,
             'account_number': funeral_request.account_number or '—',
+            'death_date': funeral_request.worker.death_date.strftime('%d.%m.%Y') if funeral_request.worker.death_date else '—',
+            'death_date_iso': funeral_request.worker.death_date.strftime('%Y-%m-%d') if funeral_request.worker.death_date else '',
             'status': funeral_request.get_status(),
             'status_text': funeral_request.get_status_display_text(),
             'has_applicant_id_file': bool(funeral_request.applicant_id_file),
@@ -2964,34 +3041,15 @@ def download_funeral_request(request, request_id):
 
 
 def get_coal_compensation_period():
-    """Получает период списка компенсации за уголь: с 20 числа текущего месяца по 19 число следующего месяца"""
-    today = timezone.now().date()
-    
-    # Если сегодня до 20 числа, период - с 20 прошлого месяца по 19 текущего
-    if today.day < 20:
-        # Период: с 20 прошлого месяца по 19 текущего
-        if today.month == 1:
-            period_start = date(today.year - 1, 12, 20)
-            period_end = date(today.year, 1, 19)
-        else:
-            period_start = date(today.year, today.month - 1, 20)
-            period_end = date(today.year, today.month, 19)
-    else:
-        # Период: с 20 текущего месяца по 19 следующего
-        if today.month == 12:
-            period_start = date(today.year, 12, 20)
-            period_end = date(today.year + 1, 1, 19)
-        else:
-            period_start = date(today.year, today.month, 20)
-            period_end = date(today.year, today.month + 1, 19)
-    
-    return period_start, period_end
+    """Получает текущий период списка: с 1 по 30 число текущего месяца."""
+    return get_statement_period()
 
 
 @login_required
 def coal_compensation_list(request):
     """Отображение списка компенсации за уголь"""
     user_is_admin = is_admin(request.user)
+    selected_user_id = get_admin_selected_user_id(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -2999,10 +3057,7 @@ def coal_compensation_list(request):
         try:
             period_start = date.fromisoformat(selected_period_start)
             # Вычисляем period_end для выбранного периода
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            period_end = get_period_end_for_start(period_start)
         except (ValueError, TypeError):
             # Если невалидная дата, используем текущий период
             period_start, period_end = get_coal_compensation_period()
@@ -3016,6 +3071,8 @@ def coal_compensation_list(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker', 'user').order_by('worker__full_name')
+        if selected_user_id:
+            coal_requests = coal_requests.filter(worker__user_id=selected_user_id)
     else:
         coal_requests = CoalRequest.objects.filter(
             worker__user=request.user,
@@ -3062,18 +3119,14 @@ def coal_compensation_list(request):
     all_periods = []
     if user_is_admin:
         all_coal_requests = CoalRequest.objects.all().order_by('-created_at')
+        if selected_user_id:
+            all_coal_requests = all_coal_requests.filter(worker__user_id=selected_user_id)
     else:
         all_coal_requests = CoalRequest.objects.filter(worker__user=request.user).order_by('-created_at')
     periods_set = set()
     for req in all_coal_requests:
         req_date = req.created_at.date()
-        if req_date.day < 20:
-            if req_date.month == 1:
-                period_start_item = date(req_date.year - 1, 12, 20)
-            else:
-                period_start_item = date(req_date.year, req_date.month - 1, 20)
-        else:
-            period_start_item = date(req_date.year, req_date.month, 20)
+        period_start_item = normalize_period_start(req_date)
         periods_set.add(period_start_item)
     
     all_periods = sorted(list(periods_set), reverse=True)
@@ -3114,6 +3167,7 @@ def coal_compensation_list(request):
 def generate_coal_compensation_excel(request):
     """Генерация Excel файла списка компенсации за уголь"""
     user_is_admin = is_admin(request.user)
+    selected_user_id = get_admin_selected_user_id(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -3121,10 +3175,7 @@ def generate_coal_compensation_excel(request):
         try:
             period_start = date.fromisoformat(selected_period_start)
             # Вычисляем period_end для выбранного периода
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            period_end = get_period_end_for_start(period_start)
         except (ValueError, TypeError):
             # Если невалидная дата, используем текущий период
             period_start, period_end = get_coal_compensation_period()
@@ -3138,6 +3189,8 @@ def generate_coal_compensation_excel(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker', 'user').order_by('worker__full_name')
+        if selected_user_id:
+            coal_requests = coal_requests.filter(worker__user_id=selected_user_id)
     else:
         coal_requests = CoalRequest.objects.filter(
             worker__user=request.user,
@@ -3342,6 +3395,7 @@ def generate_coal_compensation_excel(request):
 def bonus_payment_list(request):
     """Отображение списка на доплату за 3 степени к наградным знакам"""
     user_is_admin = is_admin(request.user)
+    selected_user_id = get_admin_selected_user_id(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -3349,10 +3403,7 @@ def bonus_payment_list(request):
         try:
             period_start = date.fromisoformat(selected_period_start)
             # Вычисляем period_end для выбранного периода
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            period_end = get_period_end_for_start(period_start)
         except (ValueError, TypeError):
             # Если невалидная дата, используем текущий период
             period_start, period_end = get_coal_compensation_period()
@@ -3372,6 +3423,8 @@ def bonus_payment_list(request):
             status='pensioner',
             has_miner_glory=True
         ).select_related('user')
+        if selected_user_id:
+            base_query = base_query.filter(user_id=selected_user_id)
         
         if not is_current_period:
             # Для будущих периодов исключаем умерших
@@ -3466,32 +3519,14 @@ def bonus_payment_list(request):
     all_periods = []
     today = timezone.now().date()
     
-    # Генерируем периоды: текущий и 11 предыдущих (год назад)
+    # Генерируем периоды: текущий и 11 предыдущих месяцев (с 1 числа).
     for i in range(12):
-        if today.day < 20:
-            # Если сегодня до 20 числа, начинаем с прошлого месяца
-            if today.month == 1:
-                period_year = today.year - 1
-                period_month = 12 - i
-                if period_month <= 0:
-                    period_year -= 1
-                    period_month += 12
-            else:
-                period_month = today.month - 1 - i
-                period_year = today.year
-                if period_month <= 0:
-                    period_year -= 1
-                    period_month += 12
-        else:
-            # Если сегодня 20 или позже, начинаем с текущего месяца
-            period_month = today.month - i
-            period_year = today.year
-            if period_month <= 0:
-                period_year -= 1
-                period_month += 12
-        
-        period_start_item = date(period_year, period_month, 20)
-        all_periods.append(period_start_item)
+        period_year = today.year
+        period_month = today.month - i
+        while period_month <= 0:
+            period_month += 12
+            period_year -= 1
+        all_periods.append(date(period_year, period_month, 1))
     
     all_periods = sorted(list(set(all_periods)), reverse=True)
     
@@ -3518,6 +3553,7 @@ def bonus_payment_list(request):
 def generate_bonus_payment_excel(request):
     """Генерация Excel файла списка на доплату за 3 степени к наградным знакам"""
     user_is_admin = is_admin(request.user)
+    selected_user_id = get_admin_selected_user_id(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -3525,10 +3561,7 @@ def generate_bonus_payment_excel(request):
         try:
             period_start = date.fromisoformat(selected_period_start)
             # Вычисляем period_end для выбранного периода
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            period_end = get_period_end_for_start(period_start)
         except (ValueError, TypeError):
             # Если невалидная дата, используем текущий период
             period_start, period_end = get_coal_compensation_period()
@@ -3548,6 +3581,8 @@ def generate_bonus_payment_excel(request):
             status='pensioner',
             has_miner_glory=True
         ).select_related('user')
+        if selected_user_id:
+            base_query = base_query.filter(user_id=selected_user_id)
         
         if not is_current_period:
             # Для будущих периодов исключаем умерших
@@ -3791,6 +3826,7 @@ def generate_bonus_payment_excel(request):
 def funeral_services_list(request):
     """Отображение списка ритуальных услуг"""
     user_is_admin = is_admin(request.user)
+    selected_user_id = get_admin_selected_user_id(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -3798,10 +3834,7 @@ def funeral_services_list(request):
         try:
             period_start = date.fromisoformat(selected_period_start)
             # Вычисляем period_end для выбранного периода
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            period_end = get_period_end_for_start(period_start)
         except (ValueError, TypeError):
             # Если невалидная дата, используем текущий период
             period_start, period_end = get_coal_compensation_period()
@@ -3815,6 +3848,8 @@ def funeral_services_list(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker', 'user').order_by('worker__full_name')
+        if selected_user_id:
+            funeral_requests = funeral_requests.filter(worker__user_id=selected_user_id)
     else:
         funeral_requests = FuneralRequest.objects.filter(
             worker__user=request.user,
@@ -3849,18 +3884,14 @@ def funeral_services_list(request):
     all_periods = []
     if user_is_admin:
         all_funeral_requests = FuneralRequest.objects.all().order_by('-created_at')
+        if selected_user_id:
+            all_funeral_requests = all_funeral_requests.filter(worker__user_id=selected_user_id)
     else:
         all_funeral_requests = FuneralRequest.objects.filter(worker__user=request.user).order_by('-created_at')
     periods_set = set()
     for req in all_funeral_requests:
         req_date = req.created_at.date()
-        if req_date.day < 20:
-            if req_date.month == 1:
-                period_start_item = date(req_date.year - 1, 12, 20)
-            else:
-                period_start_item = date(req_date.year, req_date.month - 1, 20)
-        else:
-            period_start_item = date(req_date.year, req_date.month, 20)
+        period_start_item = normalize_period_start(req_date)
         periods_set.add(period_start_item)
     
     all_periods = sorted(list(periods_set), reverse=True)
@@ -3888,6 +3919,7 @@ def funeral_services_list(request):
 def generate_funeral_services_excel(request):
     """Генерация Excel файла списка ритуальных услуг"""
     user_is_admin = is_admin(request.user)
+    selected_user_id = get_admin_selected_user_id(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -3895,10 +3927,7 @@ def generate_funeral_services_excel(request):
         try:
             period_start = date.fromisoformat(selected_period_start)
             # Вычисляем period_end для выбранного периода
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            period_end = get_period_end_for_start(period_start)
         except (ValueError, TypeError):
             # Если невалидная дата, используем текущий период
             period_start, period_end = get_coal_compensation_period()
@@ -3912,6 +3941,8 @@ def generate_funeral_services_excel(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker', 'user').order_by('worker__full_name')
+        if selected_user_id:
+            funeral_requests = funeral_requests.filter(worker__user_id=selected_user_id)
     else:
         funeral_requests = FuneralRequest.objects.filter(
             worker__user=request.user,
@@ -4088,6 +4119,7 @@ def generate_funeral_services_excel(request):
 def pensioner_material_assistance_list(request):
     """Отображение списка материальной помощи пенсионерам"""
     user_is_admin = is_admin(request.user)
+    selected_user_id = get_admin_selected_user_id(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -4095,10 +4127,7 @@ def pensioner_material_assistance_list(request):
         try:
             period_start = date.fromisoformat(selected_period_start)
             # Вычисляем period_end для выбранного периода
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            period_end = get_period_end_for_start(period_start)
         except (ValueError, TypeError):
             # Если невалидная дата, используем текущий период
             period_start, period_end = get_coal_compensation_period()
@@ -4114,6 +4143,8 @@ def pensioner_material_assistance_list(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker', 'user').order_by('worker__full_name')
+        if selected_user_id:
+            material_requests = material_requests.filter(worker__user_id=selected_user_id)
     else:
         material_requests = MaterialAssistanceRequest.objects.filter(
             user=request.user,
@@ -4188,6 +4219,8 @@ def pensioner_material_assistance_list(request):
             worker__status='pensioner',
             assistance_type='treatment'
         ).order_by('-created_at')
+        if selected_user_id:
+            all_material_requests = all_material_requests.filter(worker__user_id=selected_user_id)
     else:
         all_material_requests = MaterialAssistanceRequest.objects.filter(
             user=request.user,
@@ -4198,13 +4231,7 @@ def pensioner_material_assistance_list(request):
     periods_set = set()
     for req in all_material_requests:
         req_date = req.created_at.date()
-        if req_date.day < 20:
-            if req_date.month == 1:
-                period_start_item = date(req_date.year - 1, 12, 20)
-            else:
-                period_start_item = date(req_date.year, req_date.month - 1, 20)
-        else:
-            period_start_item = date(req_date.year, req_date.month, 20)
+        period_start_item = normalize_period_start(req_date)
         periods_set.add(period_start_item)
     
     all_periods = sorted(list(periods_set), reverse=True)
@@ -4236,15 +4263,13 @@ def pensioner_material_assistance_list(request):
 def material_assistance_registry_list(request):
     """Реестр (таблица) всех заявлений на материальную помощь"""
     user_is_admin = is_admin(request.user)
+    selected_user_id = get_admin_selected_user_id(request)
 
     selected_period_start = request.GET.get('period_start')
     if selected_period_start:
         try:
             period_start = date.fromisoformat(selected_period_start)
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            period_end = get_period_end_for_start(period_start)
         except (ValueError, TypeError):
             period_start, period_end = get_coal_compensation_period()
     else:
@@ -4255,6 +4280,8 @@ def material_assistance_registry_list(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker', 'user').order_by('worker__full_name')
+        if selected_user_id:
+            material_requests = material_requests.filter(worker__user_id=selected_user_id)
     else:
         material_requests = MaterialAssistanceRequest.objects.filter(
             worker__user=request.user,
@@ -4289,19 +4316,15 @@ def material_assistance_registry_list(request):
     # периоды для селектора
     if user_is_admin:
         all_requests = MaterialAssistanceRequest.objects.all().order_by('-created_at')
+        if selected_user_id:
+            all_requests = all_requests.filter(worker__user_id=selected_user_id)
     else:
         all_requests = MaterialAssistanceRequest.objects.filter(worker__user=request.user).order_by('-created_at')
 
     periods_set = set()
     for req in all_requests:
         req_date = req.created_at.date()
-        if req_date.day < 20:
-            if req_date.month == 1:
-                period_start_item = date(req_date.year - 1, 12, 20)
-            else:
-                period_start_item = date(req_date.year, req_date.month - 1, 20)
-        else:
-            period_start_item = date(req_date.year, req_date.month, 20)
+        period_start_item = normalize_period_start(req_date)
         periods_set.add(period_start_item)
 
     all_periods = sorted(list(periods_set), reverse=True)
@@ -4332,15 +4355,13 @@ def material_assistance_registry_list(request):
 def generate_material_assistance_registry_excel(request):
     """Excel-экспорт реестра материальной помощи"""
     user_is_admin = is_admin(request.user)
+    selected_user_id = get_admin_selected_user_id(request)
 
     selected_period_start = request.GET.get('period_start')
     if selected_period_start:
         try:
             period_start = date.fromisoformat(selected_period_start)
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            period_end = get_period_end_for_start(period_start)
         except (ValueError, TypeError):
             period_start, period_end = get_coal_compensation_period()
     else:
@@ -4351,6 +4372,8 @@ def generate_material_assistance_registry_excel(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker', 'user').order_by('worker__full_name')
+        if selected_user_id:
+            material_requests = material_requests.filter(worker__user_id=selected_user_id)
     else:
         material_requests = MaterialAssistanceRequest.objects.filter(
             worker__user=request.user,
@@ -4506,6 +4529,7 @@ def generate_material_assistance_registry_excel(request):
 def generate_pensioner_material_assistance_excel(request):
     """Генерация Excel файла списка материальной помощи пенсионерам"""
     user_is_admin = is_admin(request.user)
+    selected_user_id = get_admin_selected_user_id(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -4513,10 +4537,7 @@ def generate_pensioner_material_assistance_excel(request):
         try:
             period_start = date.fromisoformat(selected_period_start)
             # Вычисляем period_end для выбранного периода
-            if period_start.month == 12:
-                period_end = date(period_start.year + 1, 1, 19)
-            else:
-                period_end = date(period_start.year, period_start.month + 1, 19)
+            period_end = get_period_end_for_start(period_start)
         except (ValueError, TypeError):
             # Если невалидная дата, используем текущий период
             period_start, period_end = get_coal_compensation_period()
@@ -4532,6 +4553,8 @@ def generate_pensioner_material_assistance_excel(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker', 'user').order_by('worker__full_name')
+        if selected_user_id:
+            material_requests = material_requests.filter(worker__user_id=selected_user_id)
     else:
         material_requests = MaterialAssistanceRequest.objects.filter(
             user=request.user,
@@ -5001,7 +5024,7 @@ def reject_vacation_request(request, request_id):
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
 
-    vacation = get_object_or_404(VacationRequest, id=request_id)
+    vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id)
     vacation.request_status = 'inactive'
     vacation.save(update_fields=['request_status', 'updated_at'])
     return JsonResponse({'success': True, 'status': vacation.get_status(), 'status_text': vacation.get_status_display_text()})
@@ -5056,6 +5079,185 @@ def _parse_bool(value):
         return False
     s = str(value).strip().lower()
     return s in ('1', 'true', 'yes', 'да', 'y', 'on')
+
+
+def _request_payload(request):
+    if request.content_type and 'application/json' in request.content_type:
+        try:
+            import json
+            data = json.loads(request.body.decode('utf-8') or '{}')
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+    return request.POST
+
+
+def _validate_kz_account_number(account_number):
+    if not account_number:
+        return 'Не указан номер счета'
+    if not account_number.startswith('KZ'):
+        return 'Номер счета должен начинаться с KZ'
+    if len(account_number) != 20:
+        return 'Номер счета должен содержать KZ и 18 цифр'
+    if not account_number[2:].isdigit():
+        return 'После KZ должны быть только цифры'
+    return None
+
+
+@login_required
+def edit_material_assistance_request(request, request_id):
+    """Редактирование заявления на материальную помощь."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    user_is_admin = is_admin(request.user)
+    if user_is_admin:
+        material_request = get_object_or_404(MaterialAssistanceRequest, id=request_id)
+    else:
+        material_request = get_object_or_404(MaterialAssistanceRequest, id=request_id, worker__user=request.user)
+
+    if material_request.request_status == 'inactive':
+        return JsonResponse({'error': 'Неактивное заявление нельзя редактировать'}, status=400)
+
+    payload = _request_payload(request)
+
+    assistance_type = (payload.get('assistance_type') or material_request.assistance_type or '').strip()
+    account_type = (payload.get('account_type') or material_request.account_type or '').strip()
+    account_number = (payload.get('account_number') or material_request.account_number or '').strip()
+    amount_raw = payload.get('amount')
+
+    if assistance_type not in dict(MaterialAssistanceRequest.ASSISTANCE_TYPE_CHOICES):
+        return JsonResponse({'error': 'Некорректный вид помощи'}, status=400)
+    if account_type not in dict(MaterialAssistanceRequest.ACCOUNT_TYPE_CHOICES):
+        return JsonResponse({'error': 'Некорректный тип счета'}, status=400)
+
+    account_error = _validate_kz_account_number(account_number)
+    if account_error:
+        return JsonResponse({'error': account_error}, status=400)
+
+    worker = material_request.worker
+    if worker.status == 'pensioner':
+        if assistance_type != 'treatment':
+            return JsonResponse({'error': 'Для пенсионеров доступна только помощь на лечение'}, status=400)
+        amount_decimal = Decimal('0')
+    else:
+        if amount_raw in (None, ''):
+            amount_raw = material_request.amount
+        try:
+            amount_decimal = Decimal(str(amount_raw))
+        except (InvalidOperation, TypeError, ValueError):
+            return JsonResponse({'error': 'Некорректная сумма'}, status=400)
+        if amount_decimal <= 0:
+            return JsonResponse({'error': 'Сумма должна быть больше 0'}, status=400)
+
+    if account_type == '20_digit':
+        worker.account_20_digit = account_number
+    else:
+        worker.current_account = account_number
+    worker.save(update_fields=['account_20_digit', 'current_account', 'updated_at'])
+
+    material_request.assistance_type = assistance_type
+    material_request.amount = amount_decimal
+    material_request.account_type = account_type
+    material_request.account_number = account_number
+    material_request.save(update_fields=['assistance_type', 'amount', 'account_type', 'account_number', 'updated_at'])
+
+    return JsonResponse({'success': True})
+
+
+@login_required
+def edit_coal_request(request, request_id):
+    """Редактирование заявления на уголь."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    user_is_admin = is_admin(request.user)
+    if user_is_admin:
+        coal_request = get_object_or_404(CoalRequest, id=request_id)
+    else:
+        coal_request = get_object_or_404(CoalRequest, id=request_id, worker__user=request.user)
+
+    if coal_request.request_status == 'inactive':
+        return JsonResponse({'error': 'Неактивное заявление нельзя редактировать'}, status=400)
+
+    payload = _request_payload(request)
+    account_type = (payload.get('account_type') or coal_request.account_type or '').strip()
+    account_number = (payload.get('account_number') or coal_request.account_number or '').strip()
+
+    if account_type not in dict(CoalRequest.ACCOUNT_TYPE_CHOICES):
+        return JsonResponse({'error': 'Некорректный тип счета'}, status=400)
+    account_error = _validate_kz_account_number(account_number)
+    if account_error:
+        return JsonResponse({'error': account_error}, status=400)
+
+    worker = coal_request.worker
+    if account_type == '20_digit':
+        worker.account_20_digit = account_number
+    else:
+        worker.current_account = account_number
+    worker.save(update_fields=['account_20_digit', 'current_account', 'updated_at'])
+
+    coal_request.account_type = account_type
+    coal_request.account_number = account_number
+    coal_request.save(update_fields=['account_type', 'account_number', 'updated_at'])
+
+    return JsonResponse({'success': True})
+
+
+@login_required
+def edit_funeral_request(request, request_id):
+    """Редактирование заявления на погребение."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    user_is_admin = is_admin(request.user)
+    if user_is_admin:
+        funeral_request = get_object_or_404(FuneralRequest, id=request_id)
+    else:
+        funeral_request = get_object_or_404(FuneralRequest, id=request_id, worker__user=request.user)
+
+    if funeral_request.request_status == 'inactive':
+        return JsonResponse({'error': 'Неактивное заявление нельзя редактировать'}, status=400)
+
+    payload = _request_payload(request)
+    applicant_full_name = (payload.get('applicant_full_name') or funeral_request.applicant_full_name or '').strip()
+    applicant_inn = ''.join(c for c in (payload.get('applicant_inn') or funeral_request.applicant_inn or '') if c.isdigit())
+    account_type = (payload.get('account_type') or funeral_request.account_type or '').strip()
+    account_number = (payload.get('account_number') or funeral_request.account_number or '').strip()
+    death_date_raw = (payload.get('death_date') or '').strip()
+
+    if not applicant_full_name:
+        return JsonResponse({'error': 'Не указано ФИО заявителя'}, status=400)
+    if len(applicant_inn) != 12:
+        return JsonResponse({'error': 'ИИН должен содержать 12 цифр'}, status=400)
+    if account_type not in dict(FuneralRequest.ACCOUNT_TYPE_CHOICES):
+        return JsonResponse({'error': 'Некорректный тип счета'}, status=400)
+    account_error = _validate_kz_account_number(account_number)
+    if account_error:
+        return JsonResponse({'error': account_error}, status=400)
+
+    death_date = None
+    if death_date_raw:
+        try:
+            death_date = datetime.strptime(death_date_raw, '%Y-%m-%d').date()
+        except ValueError:
+            return JsonResponse({'error': 'Некорректная дата смерти пенсионера'}, status=400)
+        if death_date > date.today():
+            return JsonResponse({'error': 'Дата смерти не может быть в будущем'}, status=400)
+
+    worker = funeral_request.worker
+    if death_date is not None:
+        worker.death_date = death_date
+        worker.is_dead = True
+        worker.save(update_fields=['death_date', 'is_dead', 'updated_at'])
+
+    funeral_request.applicant_full_name = applicant_full_name
+    funeral_request.applicant_inn = applicant_inn
+    funeral_request.account_type = account_type
+    funeral_request.account_number = account_number
+    funeral_request.save(update_fields=['applicant_full_name', 'applicant_inn', 'account_type', 'account_number', 'updated_at'])
+
+    return JsonResponse({'success': True})
 
 
 @login_required
@@ -5114,16 +5316,13 @@ def toggle_pensioner_material_assistance_issued(request, request_id):
 
 @login_required
 def delete_vacation_request(request, request_id):
-    """Удаление отменённого заявления на путёвку из кабинета пользователя"""
+    """Удаление заявления на путёвку."""
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
-    # Чтобы не ломать бизнес-логику, ограничиваем удаление только в личном кабинете
     if is_admin(request.user):
-        return JsonResponse({'error': 'Удаление доступно только в кабинете пользователя'}, status=403)
-
-    vacation = get_object_or_404(VacationRequest, id=request_id, worker__user=request.user)
-    if vacation.get_status() != 'cancelled':
-        return JsonResponse({'error': 'Удаление доступно только для отменённых заявлений'}, status=400)
+        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id)
+    else:
+        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id, worker__user=request.user)
 
     vacation.delete()
     return JsonResponse({'success': True})
@@ -5131,12 +5330,38 @@ def delete_vacation_request(request, request_id):
 
 @login_required
 def delete_coal_request(request, request_id):
-    """Удаление заявления на уголь из кабинета пользователя"""
+    """Удаление заявления на уголь."""
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
     if is_admin(request.user):
-        return JsonResponse({'error': 'Удаление доступно только в кабинете пользователя'}, status=403)
-
-    coal_request = get_object_or_404(CoalRequest, id=request_id, worker__user=request.user)
+        coal_request = get_object_or_404(CoalRequest, id=request_id)
+    else:
+        coal_request = get_object_or_404(CoalRequest, id=request_id, worker__user=request.user)
     coal_request.delete()
+    return JsonResponse({'success': True})
+
+
+@login_required
+def delete_material_assistance_request(request, request_id):
+    """Удаление заявления на материальную помощь."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    if is_admin(request.user):
+        material_request = get_object_or_404(MaterialAssistanceRequest, id=request_id)
+    else:
+        material_request = get_object_or_404(MaterialAssistanceRequest, id=request_id, worker__user=request.user)
+    material_request.delete()
+    return JsonResponse({'success': True})
+
+
+@login_required
+def delete_funeral_request(request, request_id):
+    """Удаление заявления на погребение."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    if is_admin(request.user):
+        funeral_request = get_object_or_404(FuneralRequest, id=request_id)
+    else:
+        funeral_request = get_object_or_404(FuneralRequest, id=request_id, worker__user=request.user)
+    funeral_request.delete()
     return JsonResponse({'success': True})
