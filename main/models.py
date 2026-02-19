@@ -508,7 +508,7 @@ class VacationLimit(models.Model):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end,
             is_rejected=False
-        )
+        ).prefetch_related('family_members').defer('price')
         
         total_places = 0
         for request in requests:

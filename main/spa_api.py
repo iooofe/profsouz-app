@@ -262,6 +262,8 @@ def _request_scope_for_user(user, model, request_id):
 
 
 def _serialize_vacation_request(item):
+    # Используем расчетную цену, чтобы не падать на некорректных legacy-значениях price в БД.
+    calculated_price = item.calculate_price()
     return {
         'id': item.id,
         'type': 'vacation',
@@ -277,7 +279,7 @@ def _serialize_vacation_request(item):
         'request_status': item.request_status,
         'created_at': _datetime_human(item.created_at),
         'created_at_iso': item.created_at.isoformat(),
-        'price': float(item.price) if item.price else None,
+        'price': float(calculated_price) if calculated_price is not None else None,
         'places_count': item.get_places_count(),
         'worker_goes': bool(getattr(item, 'worker_goes', True)),
         'family_members_count': item.family_members.count(),
@@ -654,9 +656,9 @@ def api_worker_detail(request, worker_id):
 def api_vacation_requests(request):
     search = request.GET.get('search', '').strip().lower()
     if is_admin(request.user):
-        qs = VacationRequest.objects.all().select_related('worker', 'user').prefetch_related('family_members').order_by('-created_at')
+        qs = VacationRequest.objects.all().select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('-created_at')
     else:
-        qs = VacationRequest.objects.filter(worker__user=request.user).select_related('worker', 'user').prefetch_related('family_members').order_by('-created_at')
+        qs = VacationRequest.objects.filter(worker__user=request.user).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('-created_at')
 
     if search:
         ids = []
@@ -716,6 +718,13 @@ def api_create_vacation_request(request):
 
     if end_date < start_date:
         return _api_error('Дата окончания не может быть раньше даты начала')
+
+    if start_date.year < 2000 or end_date.year < 2000:
+        return _api_error('Год в дате поездки должен быть не ранее 2000')
+
+    trip_days = (end_date - start_date).days + 1
+    if trip_days > 31:
+        return _api_error('Длительность путевки не может превышать 31 день')
 
     family_member_ids = _parse_ids(source.get('family_members'))
     worker_goes = _parse_bool(source.get('worker_goes', True))
@@ -1104,12 +1113,12 @@ def api_reports(request):
     user_is_admin = is_admin(request.user)
 
     if user_is_admin:
-        vacation = VacationRequest.objects.all().select_related('worker', 'user').prefetch_related('family_members')
+        vacation = VacationRequest.objects.all().select_related('worker', 'user').prefetch_related('family_members').defer('price')
         material = MaterialAssistanceRequest.objects.all().select_related('worker', 'user')
         coal = CoalRequest.objects.all().select_related('worker', 'user')
         funeral = FuneralRequest.objects.all().select_related('worker', 'user')
     else:
-        vacation = VacationRequest.objects.filter(worker__user=request.user).select_related('worker', 'user').prefetch_related('family_members')
+        vacation = VacationRequest.objects.filter(worker__user=request.user).select_related('worker', 'user').prefetch_related('family_members').defer('price')
         material = MaterialAssistanceRequest.objects.filter(worker__user=request.user).select_related('worker', 'user')
         coal = CoalRequest.objects.filter(worker__user=request.user).select_related('worker', 'user')
         funeral = FuneralRequest.objects.filter(worker__user=request.user).select_related('worker', 'user')

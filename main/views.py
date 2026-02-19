@@ -744,6 +744,19 @@ def create_vacation_request(request):
         except (ValueError, TypeError) as date_error:
             messages.error(request, f'Неверный формат даты: {str(date_error)}')
             return redirect(f"{reverse('main:index')}?tab=applications")
+
+        if end_date < start_date:
+            messages.error(request, 'Дата окончания не может быть раньше даты начала!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
+
+        if start_date.year < 2000 or end_date.year < 2000:
+            messages.error(request, 'Год в дате поездки должен быть не ранее 2000!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
+
+        trip_days = (end_date - start_date).days + 1
+        if trip_days > 31:
+            messages.error(request, 'Длительность путевки не может превышать 31 день!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
         
         # Получаем список выбранных членов семьи (нужно для всех пользователей)
         family_member_ids = request.POST.getlist('family_members')
@@ -1030,6 +1043,13 @@ def edit_vacation_request(request, request_id):
 
     if end_date < start_date:
         return JsonResponse({'error': 'Дата окончания не может быть раньше даты начала'}, status=400)
+
+    if start_date.year < 2000 or end_date.year < 2000:
+        return JsonResponse({'error': 'Год в дате поездки должен быть не ранее 2000'}, status=400)
+
+    trip_days = (end_date - start_date).days + 1
+    if trip_days > 31:
+        return JsonResponse({'error': 'Длительность путевки не может превышать 31 день'}, status=400)
 
     # Хотя бы один отдыхающий
     if not worker_goes and len(family_member_ids) == 0:
