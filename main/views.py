@@ -150,6 +150,35 @@ def get_print_enterprise_name(request, selected_user_id=None):
     return request.user.username
 
 
+def get_request_enterprise_name(request_obj):
+    """Возвращает название предприятия/аккаунта для шапки заявлений."""
+    worker_user = getattr(getattr(request_obj, 'worker', None), 'user', None)
+    if worker_user and getattr(worker_user, 'username', None):
+        return worker_user.username
+    owner_user = getattr(request_obj, 'user', None)
+    if owner_user and getattr(owner_user, 'username', None):
+        return owner_user.username
+    return '—'
+
+
+def get_enterprise_company_name(enterprise_name):
+    """Возвращает отображаемое наименование компании с учетом исключений."""
+    normalized = (enterprise_name or '').strip().upper()
+    if normalized in {'УТТ', 'КПТУ'}:
+        return 'АО «QARMЕТ»'
+    return 'ТОО Karaganda komir'
+
+
+def get_vacation_header_lines(vacation):
+    """Возвращает 2 строки шапки заявления на путевку."""
+    enterprise_name = get_request_enterprise_name(vacation)
+    company_name = get_enterprise_company_name(enterprise_name)
+    return (
+        'председателю проф союзного коммитета___________',
+        f'{enterprise_name} ({company_name})',
+    )
+
+
 def parse_optional_custom_price(raw_value, resort):
     value = (raw_value or '').strip()
     if not value:
@@ -1185,15 +1214,13 @@ def generate_vacation_request_preview(vacation):
         request_text = f'Прошу выделить {people_count} путевку(ки) в {resort_name}'
     
     # Для Жартас и Шахтер - полный шаблон, для остальных - упрощенный
+    header_line_1, header_line_2 = get_vacation_header_lines(vacation)
     if vacation.resort in ['zhartas', 'shakhter']:
         preview = f'''
     <div class="vacation-request-preview">
         <div class="preview-header-right">
-            <div>Приложение №2</div>
-            <div>к Положению об оздоровлении работников</div>
-            <div>и членов их семьи</div>
-            <div>АО «QARMЕТ»</div>
-            <div>(стальной и угольный департаменты)</div>
+            <div>{header_line_1}</div>
+            <div>{header_line_2}</div>
         </div>
         <div class="preview-applicant-right">
             <div>от {vacation.worker.full_name}</div>
@@ -1231,11 +1258,8 @@ def generate_vacation_request_preview(vacation):
         preview = f'''
         <div class="vacation-request-preview">
             <div class="preview-header-right">
-                <div>Приложение №2</div>
-                <div>к Положению об оздоровлении работников</div>
-                <div>и членов их семьи</div>
-                <div>АО «QARMЕТ»</div>
-                <div>(стальной и угольный департаменты)</div>
+                <div>{header_line_1}</div>
+                <div>{header_line_2}</div>
             </div>
             <div class="preview-applicant-right">
                 <div>от {vacation.worker.full_name}</div>
@@ -1287,9 +1311,10 @@ def generate_vacation_request_docx(vacation):
     paragraph_format.line_spacing = 1.0
     
     # Заголовок справа
+    header_line_1, header_line_2 = get_vacation_header_lines(vacation)
     header_para = doc.add_paragraph()
     header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    header_run = header_para.add_run('Приложение №2\nк Положению об оздоровлении работников\nи членов их семьи\nАО «QARMЕТ»\n(стальной и угольный департаменты)')
+    header_run = header_para.add_run(f'{header_line_1}\n{header_line_2}')
     header_run.font.size = Pt(9)
     
     # Данные заявителя справа
@@ -1428,9 +1453,10 @@ def generate_vacation_request_docx_standard(vacation):
     font.size = Pt(11)
     
     # Заголовок справа
+    header_line_1, header_line_2 = get_vacation_header_lines(vacation)
     header_para = doc.add_paragraph()
     header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    header_run = header_para.add_run('Приложение №2\nк Положению об оздоровлении работников\nи членов их семьи\nАО «QARMЕТ»\n(стальной и угольный департаменты)')
+    header_run = header_para.add_run(f'{header_line_1}\n{header_line_2}')
     header_run.font.size = Pt(9)
     
     # Данные заявителя справа
