@@ -1,5 +1,6 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db import transaction
@@ -137,6 +138,16 @@ def get_admin_selected_user_id(request):
         return int(raw)
     except (TypeError, ValueError):
         return None
+
+
+def get_print_enterprise_name(request, selected_user_id=None):
+    """Возвращает имя предприятия для шапки печатных списков."""
+    if is_admin(request.user):
+        if selected_user_id:
+            username = User.objects.filter(id=selected_user_id).values_list('username', flat=True).first()
+            return username or 'Неизвестное предприятие'
+        return 'Общий список (все предприятия)'
+    return request.user.username
 
 
 def parse_optional_custom_price(raw_value, resort):
@@ -749,7 +760,7 @@ def create_vacation_request(request):
         custom_price_raw = request.POST.get('custom_price', '')
         
         # Проверка: пенсионеры не могут создавать заявления на Балхаш и Дискавери
-        if worker.status == 'pensioner' and resort in ['balkhash', 'discovery']:
+        if worker.is_pensioner_like() and resort in ['balkhash', 'discovery']:
             resort_name = dict(VacationRequest.RESORT_CHOICES).get(resort, resort)
             messages.error(request, f'Пенсионеры не могут создавать заявления на курорт "{resort_name}"!')
             return redirect(f"{reverse('main:index')}?tab=applications")
@@ -1030,7 +1041,7 @@ def edit_vacation_request(request, request_id):
         return JsonResponse({'error': 'Method not allowed'}, status=405)
 
     # Нельзя редактировать отменённые/отклонённые
-    if vacation.is_rejected or vacation.request_status == 'inactive' or (vacation.worker.status == 'pensioner' and vacation.worker.is_dead):
+    if vacation.is_rejected or vacation.request_status == 'inactive' or (vacation.worker.is_pensioner_like() and vacation.worker.is_dead):
         return JsonResponse({'error': 'Редактирование недоступно для неактивных/отменённых заявлений'}, status=400)
 
     payload = {}
@@ -1067,7 +1078,7 @@ def edit_vacation_request(request, request_id):
         return JsonResponse({'error': 'Не выбран курорт'}, status=400)
 
     # Проверка: пенсионеры не могут Балхаш/Дискавери
-    if vacation.worker.status == 'pensioner' and resort in ['balkhash', 'discovery']:
+    if vacation.worker.is_pensioner_like() and resort in ['balkhash', 'discovery']:
         resort_name = dict(VacationRequest.RESORT_CHOICES).get(resort, resort)
         return JsonResponse({'error': f'Пенсионеры не могут выбирать курорт \"{resort_name}\"'}, status=400)
 
@@ -1199,10 +1210,10 @@ def generate_vacation_request_preview(vacation):
             <div>Сроком {days} дней с {start_date_str} года.</div>
                 <div>Отпуск с «______» ______ 201__ г..</div>
             {f'<div>{family_names} (членам семьи)</div>' if family_names else ''}
-            <div>Прошу Вас удержать из моей заработной платы, внести стоимость путевки (ок) {price_str} в сумме тенге.</div>
+            <div>Прошу внести стоимость путевки (ок) {price_str} в сумме тенге.</div>
             <div>Я, {vacation.worker.full_name} обязуюсь использовать выделенную и выданную мне на Предприятии льготную путевку в количестве {people_count} штук, в {resort_name} по личному и целевому назначению.</div>
-            <div>Я предупрежден, что в случае передачи льготной путевки (-ок) постороннему или другому лицу, а также в случае отказа без уважительной причины от предоставленной мне путевки (-ок) будет произведено удержание <strong>полной стоимости</strong> путевки из моей заработной платы по предъявлению Работодателя.</div>
-            <div>С таким удержанием я согласен.</div>
+            <div>Я предупрежден, что в случае передачи льготной путевки (-ок) постороннему или другому лицу, а также в случае отказа без уважительной причины от предоставленной мне путевки (-ок) требуется оплата <strong>полной стоимости</strong> путевки по предъявлению Работодателя.</div>
+            <div>С условиями оплаты я согласен.</div>
                 <div>({id_info or "—"})</div>
         </div>
         <div class="preview-signatures-right">
@@ -1332,9 +1343,9 @@ def generate_vacation_request_docx(vacation):
         family_names = ', '.join([fm.full_name for fm in vacation.family_members.all()])
         family_para.add_run(f'{family_names} (членам семьи)')
     
-    # Прошу Вас удержать
+    # Просьба о внесении стоимости путевки
     request_para4 = doc.add_paragraph()
-    request_para4.add_run(f'Прошу Вас удержать из моей заработной платы, внести стоимость путевки (ок) {price_str} в сумме тенге.')
+    request_para4.add_run(f'Прошу внести стоимость путевки (ок) {price_str} в сумме тенге.')
     
     # Я, ФИО обязуюсь
     request_para5 = doc.add_paragraph()
@@ -1342,15 +1353,15 @@ def generate_vacation_request_docx(vacation):
     
     # Предупреждение
     request_para6 = doc.add_paragraph()
-    warning_text = 'Я предупрежден, что в случае передачи льготной путевки (-ок) постороннему или другому лицу, а также в случае отказа без уважительной причины от предоставленной мне путевки (-ок) будет произведено удержание '
+    warning_text = 'Я предупрежден, что в случае передачи льготной путевки (-ок) постороннему или другому лицу, а также в случае отказа без уважительной причины от предоставленной мне путевки (-ок) требуется оплата '
     warning_run1 = request_para6.add_run(warning_text)
     bold_text = request_para6.add_run('полной стоимости')
     bold_text.bold = True
-    warning_run2 = request_para6.add_run(' путевки из моей заработной платы по предъявлению Работодателя.')
+    warning_run2 = request_para6.add_run(' путевки по предъявлению Работодателя.')
     
     # Согласие
     request_para7 = doc.add_paragraph()
-    request_para7.add_run('С таким удержанием я согласен.')
+    request_para7.add_run('С условиями оплаты я согласен.')
     
     # Удостоверение личности (в скобках, как в предпросмотре)
     id_info = ''
@@ -2086,7 +2097,7 @@ def create_material_assistance_request(request):
             return redirect(f"{reverse('main:index')}?tab=applications")
 
         # Запрет дублей и взаимоисключение для пенсионеров: уголь ↔ лекарства (на лечение)
-        if worker.status == 'pensioner':
+        if worker.is_pensioner_like():
             # Дубли (даже если пытались заполнить дважды) — блокируем повторное оформление
             if MaterialAssistanceRequest.objects.filter(worker=worker, assistance_type=assistance_type).exists():
                 messages.error(
@@ -2104,7 +2115,7 @@ def create_material_assistance_request(request):
                 return redirect(f"{reverse('main:index')}?tab=applications")
         
         # Для пенсионеров сумма не требуется (будет 0)
-        if worker.status != 'pensioner':
+        if not worker.is_pensioner_like():
             if not amount or float(amount) <= 0:
                 messages.error(request, 'Не указана сумма или сумма должна быть больше нуля!')
                 return redirect(f"{reverse('main:index')}?tab=applications")
@@ -2121,19 +2132,14 @@ def create_material_assistance_request(request):
             print(f"DEBUG: Создание заявления - worker_id={worker_id}, assistance_type={assistance_type}, amount={amount_decimal}")
             
             with transaction.atomic():
-                if account_type == '20_digit':
-                    worker.account_20_digit = account_number
-                else:
-                    worker.current_account = account_number
-                worker.save()
-
                 material_assistance = MaterialAssistanceRequest.objects.create(
                     user=request.user,
                     worker=worker,
                     assistance_type=assistance_type,
                     amount=amount_decimal,
                     account_type=account_type,
-                    account_number=account_number
+                    account_number=account_number,
+                    account_file=request.FILES.get('account_file'),
                 )
             
             print(f"DEBUG: Заявление создано успешно, ID={material_assistance.id}")
@@ -2152,7 +2158,7 @@ def create_material_assistance_request(request):
                 worker_name_clean = worker.full_name.replace(' ', '_')
                 assistance_type_clean = assistance_type_display.replace(' ', '_')
                 # Для пенсионеров используем специальное название
-                if worker.status == 'pensioner':
+                if worker.is_pensioner_like():
                     filename = f"Заявление_на_материальную_помощь_на_лечение_{worker_name_clean}_{date.today().strftime('%d.%m.%Y')}.docx"
                 else:
                     filename = f"Заявление_на_материальную_помощь_{assistance_type_clean}_{worker_name_clean}_{date.today().strftime('%d.%m.%Y')}.docx"
@@ -2191,7 +2197,7 @@ def generate_material_assistance_docx(material_assistance):
     section.bottom_margin = Inches(0.79)
     
     # Проверяем, является ли работник пенсионером
-    is_pensioner = material_assistance.worker.status == 'pensioner'
+    is_pensioner = material_assistance.worker.is_pensioner_like()
     is_treatment = material_assistance.assistance_type == 'treatment'
     
     if is_pensioner and is_treatment:
@@ -2319,7 +2325,7 @@ def generate_material_assistance_docx(material_assistance):
 def generate_material_assistance_preview(material_assistance):
     """Генерация HTML предпросмотра заявления на материальную помощь"""
     # Проверяем, является ли работник пенсионером
-    is_pensioner = material_assistance.worker.status == 'pensioner'
+    is_pensioner = material_assistance.worker.is_pensioner_like()
     is_treatment = material_assistance.assistance_type == 'treatment'
     
     # Информация о заявителе
@@ -2399,6 +2405,8 @@ def material_assistance_detail(request, request_id):
             'account_type': material_assistance.get_account_type_display(),
             'account_type_code': material_assistance.account_type,
             'account_number': display_account_number,
+            'account_file_url': material_assistance.account_file.url if material_assistance.account_file else None,
+            'account_file_name': material_assistance.account_file.name.split('/')[-1] if material_assistance.account_file else None,
             'status': material_assistance.get_status(),
             'status_text': material_assistance.get_status_display_text(),
         },
@@ -2424,7 +2432,7 @@ def download_material_assistance(request, request_id):
     worker_name_clean = material_assistance.worker.full_name.replace(' ', '_')
     assistance_type_clean = assistance_type_display.replace(' ', '_')
     # Для пенсионеров используем специальное название
-    if material_assistance.worker.status == 'pensioner':
+    if material_assistance.worker.is_pensioner_like():
         filename = f"Заявление_на_материальную_помощь_на_лечение_{worker_name_clean}_{date.today().strftime('%d.%m.%Y')}.docx"
     else:
         filename = f"Заявление_на_материальную_помощь_{assistance_type_clean}_{worker_name_clean}_{date.today().strftime('%d.%m.%Y')}.docx"
@@ -2459,7 +2467,7 @@ def create_coal_request(request):
             return redirect(f"{reverse('main:index')}?tab=applications")
         
         # Проверяем, что работник - пенсионер
-        if worker.status != 'pensioner':
+        if not worker.is_pensioner_like():
             messages.error(request, 'Заявление на уголь может подать только пенсионер!')
             return redirect(f"{reverse('main:index')}?tab=applications")
 
@@ -2471,7 +2479,11 @@ def create_coal_request(request):
             )
             return redirect(f"{reverse('main:index')}?tab=applications")
 
-        if MaterialAssistanceRequest.objects.filter(worker=worker, worker__status='pensioner', assistance_type='treatment').exists():
+        if MaterialAssistanceRequest.objects.filter(
+            worker=worker,
+            worker__status__in=Worker.PENSIONER_STATUS_CODES,
+            assistance_type='treatment',
+        ).exists():
             messages.error(
                 request,
                 'Нельзя оформить заявление на уголь, потому что для этого пенсионера уже есть заявление на материальную помощь (лекарства).'
@@ -2507,19 +2519,15 @@ def create_coal_request(request):
         # Создаем заявление
         try:
             # Сохраняем файлы в карточку работника
+            worker_updated = False
             if 'passport_file' in request.FILES:
                 worker.house_passport_file = request.FILES['passport_file']
+                worker_updated = True
             if 'pensioner_id_file' in request.FILES:
                 worker.pensioner_id_file = request.FILES['pensioner_id_file']
-            
-            # Сохраняем счет в карточку работника в зависимости от типа
-            if account_number:
-                if account_type == '20_digit':
-                    worker.account_20_digit = account_number
-                elif account_type == 'current':
-                    worker.current_account = account_number
-
-            worker.save()
+                worker_updated = True
+            if worker_updated:
+                worker.save()
             
             # Создаем заявление (файлы уже сохранены в карточке работника)
             coal_request = CoalRequest.objects.create(
@@ -2527,6 +2535,7 @@ def create_coal_request(request):
                 worker=worker,
                 account_type=account_type,
                 account_number=account_number,
+                account_file=request.FILES.get('account_file'),
             )
             
             messages.success(request, f'Заявление на уголь для {worker.full_name} успешно создано!')
@@ -2677,6 +2686,8 @@ def coal_request_detail(request, request_id):
             'account_type': coal_request.get_account_type_display(),
             'account_type_code': coal_request.account_type,
             'account_number': display_account_number,
+            'account_file_url': coal_request.account_file.url if coal_request.account_file else None,
+            'account_file_name': coal_request.account_file.name.split('/')[-1] if coal_request.account_file else None,
             'status': coal_request.get_status(),
             'status_text': coal_request.get_status_display_text(),
             'has_passport_file': bool(coal_request.worker.house_passport_file),
@@ -2767,7 +2778,7 @@ def create_funeral_request(request):
             return redirect(f"{reverse('main:index')}?tab=applications")
         
         # Проверяем, что работник - пенсионер
-        if worker.status != 'pensioner':
+        if not worker.is_pensioner_like():
             messages.error(request, 'Заявление на погребение может подать только для пенсионера!')
             return redirect(f"{reverse('main:index')}?tab=applications")
         
@@ -2846,6 +2857,7 @@ def create_funeral_request(request):
                 applicant_inn=cleaned_inn,
                 account_type=account_type,
                 account_number=account_number,
+                account_file=request.FILES.get('account_file'),
             )
             
             # Обрабатываем удостоверение заявителя
@@ -2972,6 +2984,8 @@ def funeral_request_detail(request, request_id):
             'account_type': funeral_request.get_account_type_display(),
             'account_type_code': funeral_request.account_type,
             'account_number': funeral_request.account_number or '—',
+            'account_file_url': funeral_request.account_file.url if funeral_request.account_file else None,
+            'account_file_name': funeral_request.account_file.name.split('/')[-1] if funeral_request.account_file else None,
             'death_date': funeral_request.worker.death_date.strftime('%d.%m.%Y') if funeral_request.worker.death_date else '—',
             'death_date_iso': funeral_request.worker.death_date.strftime('%Y-%m-%d') if funeral_request.worker.death_date else '',
             'status': funeral_request.get_status(),
@@ -3101,6 +3115,8 @@ def coal_compensation_list(request):
             'number': idx,
             'full_name': worker.full_name,
             'inn': worker.inn or '',
+            'worker_status': worker.status,
+            'worker_status_display': worker.get_status_display(),
             'account_number': account_number,
             'bank': 'Народный Банк',
             'benefits': benefits,
@@ -3168,6 +3184,7 @@ def generate_coal_compensation_excel(request):
     """Генерация Excel файла списка компенсации за уголь"""
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
+    enterprise_name = get_print_enterprise_name(request, selected_user_id)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -3236,11 +3253,14 @@ def generate_coal_compensation_excel(request):
     # Период
     ws.merge_cells('A2:I2')
     period_cell = ws['A2']
-    period_cell.value = f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}'
+    period_cell.value = (
+        f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}\n'
+        f'Предприятие: {enterprise_name}'
+    )
     period_cell.font = Font(bold=True, size=12, name='Arial')
     period_cell.alignment = center_alignment
     period_cell.border = border_style
-    ws.row_dimensions[2].height = 25
+    ws.row_dimensions[2].height = 36
     
     # Статус
     today = timezone.now().date()
@@ -3503,6 +3523,8 @@ def bonus_payment_list(request):
             'number': idx,
             'full_name': worker.full_name,
             'inn': worker.inn or '',
+            'worker_status': worker.status,
+            'worker_status_display': worker.get_status_display(),
             'account_number': account_number,
             'bank': 'Народный Банк',
             'benefits': benefits,
@@ -3554,6 +3576,7 @@ def generate_bonus_payment_excel(request):
     """Генерация Excel файла списка на доплату за 3 степени к наградным знакам"""
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
+    enterprise_name = get_print_enterprise_name(request, selected_user_id)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -3642,11 +3665,14 @@ def generate_bonus_payment_excel(request):
     # Период
     ws.merge_cells('A2:I2')
     period_cell = ws['A2']
-    period_cell.value = f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}'
+    period_cell.value = (
+        f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}\n'
+        f'Предприятие: {enterprise_name}'
+    )
     period_cell.font = Font(bold=True, size=12, name='Arial')
     period_cell.alignment = center_alignment
     period_cell.border = border_style
-    ws.row_dimensions[2].height = 25
+    ws.row_dimensions[2].height = 36
     
     # Статус
     today = timezone.now().date()
@@ -3860,23 +3886,26 @@ def funeral_services_list(request):
     # Подготавливаем данные для таблицы
     funeral_data = []
     for idx, funeral_request in enumerate(funeral_requests, 1):
+        worker = funeral_request.worker
         # Получаем счет карты
         account_number = ''
         if funeral_request.account_type == '20_digit':
             account_number = funeral_request.account_number or ''
         else:
-            account_number = funeral_request.account_number or funeral_request.worker.current_account or ''
+            account_number = funeral_request.account_number or worker.current_account or ''
         
         funeral_data.append({
             'number': idx,
             'applicant_full_name': funeral_request.applicant_full_name,
             'applicant_inn': funeral_request.applicant_inn,
+            'worker_status': worker.status,
+            'worker_status_display': worker.get_status_display(),
             'account_number': account_number,
-            'pensioner_full_name': funeral_request.worker.full_name,
+            'pensioner_full_name': worker.full_name,
             'bank': 'Народный Банк',
             'to_pay': str(funeral_request.to_pay) if funeral_request.to_pay else '',
             'funeral_request_id': funeral_request.id,
-            'worker_id': funeral_request.worker.id,
+            'worker_id': worker.id,
             'user_account': funeral_request.user.username if user_is_admin else None,  # Аккаунт для админа
         })
     
@@ -3920,6 +3949,7 @@ def generate_funeral_services_excel(request):
     """Генерация Excel файла списка ритуальных услуг"""
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
+    enterprise_name = get_print_enterprise_name(request, selected_user_id)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -3984,11 +4014,14 @@ def generate_funeral_services_excel(request):
     # Период
     ws.merge_cells('A2:G2')
     period_cell = ws['A2']
-    period_cell.value = f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}'
+    period_cell.value = (
+        f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}\n'
+        f'Предприятие: {enterprise_name}'
+    )
     period_cell.font = Font(bold=True, size=12, name='Arial')
     period_cell.alignment = center_alignment
     period_cell.border = border_style
-    ws.row_dimensions[2].height = 25
+    ws.row_dimensions[2].height = 36
     
     # Статус
     today = timezone.now().date()
@@ -4138,7 +4171,7 @@ def pensioner_material_assistance_list(request):
     # Получаем все заявления на материальную помощь для пенсионеров (на лечение) в выбранном периоде
     if user_is_admin:
         material_requests = MaterialAssistanceRequest.objects.filter(
-            worker__status='pensioner',
+            worker__status__in=Worker.PENSIONER_STATUS_CODES,
             assistance_type='treatment',
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
@@ -4148,7 +4181,7 @@ def pensioner_material_assistance_list(request):
     else:
         material_requests = MaterialAssistanceRequest.objects.filter(
             user=request.user,
-            worker__status='pensioner',
+            worker__status__in=Worker.PENSIONER_STATUS_CODES,
             assistance_type='treatment',
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
@@ -4198,6 +4231,8 @@ def pensioner_material_assistance_list(request):
             'number': idx,
             'full_name': worker.full_name,
             'inn': worker.inn or '',
+            'worker_status': worker.status,
+            'worker_status_display': worker.get_status_display(),
             'account_number': account_number,
             'bank': 'Народный Банк',
             'benefits': benefits,
@@ -4216,7 +4251,7 @@ def pensioner_material_assistance_list(request):
     all_periods = []
     if user_is_admin:
         all_material_requests = MaterialAssistanceRequest.objects.filter(
-            worker__status='pensioner',
+            worker__status__in=Worker.PENSIONER_STATUS_CODES,
             assistance_type='treatment'
         ).order_by('-created_at')
         if selected_user_id:
@@ -4224,7 +4259,7 @@ def pensioner_material_assistance_list(request):
     else:
         all_material_requests = MaterialAssistanceRequest.objects.filter(
             user=request.user,
-            worker__status='pensioner',
+            worker__status__in=Worker.PENSIONER_STATUS_CODES,
             assistance_type='treatment'
         ).order_by('-created_at')
     
@@ -4301,6 +4336,8 @@ def material_assistance_registry_list(request):
             'number': idx,
             'full_name': worker.full_name,
             'inn': worker.inn or '',
+            'worker_status': worker.status,
+            'worker_status_display': worker.get_status_display(),
             'account_number': account_number,
             'assistance_type': req.get_assistance_type_display(),
             'amount': str(req.amount) if req.amount is not None else '',
@@ -4356,6 +4393,7 @@ def generate_material_assistance_registry_excel(request):
     """Excel-экспорт реестра материальной помощи"""
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
+    enterprise_name = get_print_enterprise_name(request, selected_user_id)
 
     selected_period_start = request.GET.get('period_start')
     if selected_period_start:
@@ -4414,10 +4452,17 @@ def generate_material_assistance_registry_excel(request):
     ws.row_dimensions[1].height = 32
 
     ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=total_columns)
-    ws.cell(row=2, column=1, value=f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}').font = Font(bold=True, size=11, name='Arial')
+    ws.cell(
+        row=2,
+        column=1,
+        value=(
+            f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}\n'
+            f'Предприятие: {enterprise_name}'
+        ),
+    ).font = Font(bold=True, size=11, name='Arial')
     ws.cell(row=2, column=1).alignment = center_alignment
     ws.cell(row=2, column=1).border = border_style
-    ws.row_dimensions[2].height = 22
+    ws.row_dimensions[2].height = 34
 
     ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=total_columns)
     ws.cell(row=3, column=1, value=f'Статус: {"Ведется" if is_active_period else "Закрыт"}').font = Font(bold=True, color="FFFFFF", size=11, name='Arial')
@@ -4530,6 +4575,7 @@ def generate_pensioner_material_assistance_excel(request):
     """Генерация Excel файла списка материальной помощи пенсионерам"""
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
+    enterprise_name = get_print_enterprise_name(request, selected_user_id)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -4548,7 +4594,7 @@ def generate_pensioner_material_assistance_excel(request):
     # Получаем все заявления на материальную помощь для пенсионеров (на лечение) в выбранном периоде
     if user_is_admin:
         material_requests = MaterialAssistanceRequest.objects.filter(
-            worker__status='pensioner',
+            worker__status__in=Worker.PENSIONER_STATUS_CODES,
             assistance_type='treatment',
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
@@ -4558,7 +4604,7 @@ def generate_pensioner_material_assistance_excel(request):
     else:
         material_requests = MaterialAssistanceRequest.objects.filter(
             user=request.user,
-            worker__status='pensioner',
+            worker__status__in=Worker.PENSIONER_STATUS_CODES,
             assistance_type='treatment',
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
@@ -4602,11 +4648,14 @@ def generate_pensioner_material_assistance_excel(request):
     # Период
     ws.merge_cells('A2:I2')
     period_cell = ws['A2']
-    period_cell.value = f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}'
+    period_cell.value = (
+        f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}\n'
+        f'Предприятие: {enterprise_name}'
+    )
     period_cell.font = Font(bold=True, size=12, name='Arial')
     period_cell.alignment = center_alignment
     period_cell.border = border_style
-    ws.row_dimensions[2].height = 25
+    ws.row_dimensions[2].height = 36
     
     # Статус
     today = timezone.now().date()
@@ -5136,7 +5185,7 @@ def edit_material_assistance_request(request, request_id):
         return JsonResponse({'error': account_error}, status=400)
 
     worker = material_request.worker
-    if worker.status == 'pensioner':
+    if worker.is_pensioner_like():
         if assistance_type != 'treatment':
             return JsonResponse({'error': 'Для пенсионеров доступна только помощь на лечение'}, status=400)
         amount_decimal = Decimal('0')
@@ -5149,12 +5198,6 @@ def edit_material_assistance_request(request, request_id):
             return JsonResponse({'error': 'Некорректная сумма'}, status=400)
         if amount_decimal <= 0:
             return JsonResponse({'error': 'Сумма должна быть больше 0'}, status=400)
-
-    if account_type == '20_digit':
-        worker.account_20_digit = account_number
-    else:
-        worker.current_account = account_number
-    worker.save(update_fields=['account_20_digit', 'current_account', 'updated_at'])
 
     material_request.assistance_type = assistance_type
     material_request.amount = amount_decimal
@@ -5189,13 +5232,6 @@ def edit_coal_request(request, request_id):
     account_error = _validate_kz_account_number(account_number)
     if account_error:
         return JsonResponse({'error': account_error}, status=400)
-
-    worker = coal_request.worker
-    if account_type == '20_digit':
-        worker.account_20_digit = account_number
-    else:
-        worker.current_account = account_number
-    worker.save(update_fields=['account_20_digit', 'current_account', 'updated_at'])
 
     coal_request.account_type = account_type
     coal_request.account_number = account_number

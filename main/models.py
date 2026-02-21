@@ -36,9 +36,23 @@ def validate_inn_kz(value):
 
 
 class Worker(models.Model):
+    STATUS_WORKER = 'worker'
+    STATUS_PENSIONER = 'pensioner'
+    STATUS_REGRESSNIK = 'regressnik'
+    STATUS_REGRESSNIK_WORKER = 'regressnik_worker'
+    STATUS_REGRESSNIK_PENSIONER = 'regressnik_pensioner'
+
+    PENSIONER_STATUS_CODES = (
+        STATUS_PENSIONER,
+        STATUS_REGRESSNIK_PENSIONER,
+    )
+
     STATUS_CHOICES = [
-        ('worker', 'Работник'),
-        ('pensioner', 'Пенсионер'),
+        (STATUS_WORKER, 'Работник'),
+        (STATUS_PENSIONER, 'Пенсионер'),
+        (STATUS_REGRESSNIK, 'Регрессник'),
+        (STATUS_REGRESSNIK_WORKER, 'Регрессник работник'),
+        (STATUS_REGRESSNIK_PENSIONER, 'Регрессник пенсионер'),
     ]
     
     YES_NO_CHOICES = [
@@ -112,6 +126,10 @@ class Worker(models.Model):
     
     def __str__(self):
         return f"{self.full_name} ({self.personnel_number or '—'})"
+
+    def is_pensioner_like(self):
+        """Проверяет, относится ли статус работника к пенсионерским."""
+        return self.status in self.PENSIONER_STATUS_CODES
 
 
 class FamilyMember(models.Model):
@@ -208,7 +226,7 @@ class VacationRequest(models.Model):
             return 'cancelled'
         
         # Если пенсионер умер, все его заявления неактивны
-        if self.worker.status == 'pensioner' and self.worker.is_dead:
+        if self.worker.is_pensioner_like() and self.worker.is_dead:
             return 'cancelled'
         
         from django.utils import timezone
@@ -238,7 +256,7 @@ class VacationRequest(models.Model):
         if self.is_rejected:
             return 0
         # Если пенсионер умер, все его заявления неактивны и не занимают места
-        if self.worker.status == 'pensioner' and self.worker.is_dead:
+        if self.worker.is_pensioner_like() and self.worker.is_dead:
             return 0
         # 1 место за работника (если едет) + 1 место за каждого члена семьи
         worker_places = 1 if getattr(self, 'worker_goes', True) else 0
@@ -308,6 +326,7 @@ class MaterialAssistanceRequest(models.Model):
     amount = models.DecimalField('Сумма', max_digits=10, decimal_places=2)
     account_type = models.CharField('Тип счета', max_length=20, choices=ACCOUNT_TYPE_CHOICES, default='20_digit')
     account_number = models.CharField('Номер счета', max_length=25, blank=True)
+    account_file = models.FileField('Файл счета', upload_to='material/account_files/', null=True, blank=True)
     request_status = models.CharField('Статус заявления', max_length=20, choices=REQUEST_STATUS_CHOICES, default='active')
     is_issued = models.BooleanField('Выдано', default=False)
     accrued = models.DecimalField('Начислено', max_digits=10, decimal_places=2, null=True, blank=True)
@@ -329,7 +348,7 @@ class MaterialAssistanceRequest(models.Model):
         if self.request_status == 'inactive':
             return 'inactive'
         # Если пенсионер умер, все его заявления неактивны
-        if self.worker.status == 'pensioner' and self.worker.is_dead:
+        if self.worker.is_pensioner_like() and self.worker.is_dead:
             return 'cancelled'
         return 'active'
     
@@ -355,6 +374,7 @@ class CoalRequest(models.Model):
     worker = models.ForeignKey(Worker, on_delete=models.CASCADE, related_name='coal_requests', verbose_name='Работник')
     account_type = models.CharField('Тип счета', max_length=20, choices=ACCOUNT_TYPE_CHOICES)
     account_number = models.CharField('Номер счета', max_length=25, blank=True)  # KZ + 20 цифр = 22 символа (для совместимости, но данные хранятся в Worker)
+    account_file = models.FileField('Файл счета', upload_to='coal/account_files/', null=True, blank=True)
     request_status = models.CharField('Статус заявления', max_length=20, choices=REQUEST_STATUS_CHOICES, default='active')
     is_issued = models.BooleanField('Выдано', default=False)
     accrued = models.DecimalField('Начислено', max_digits=10, decimal_places=2, null=True, blank=True)
@@ -376,7 +396,7 @@ class CoalRequest(models.Model):
         if self.request_status == 'inactive':
             return 'inactive'
         # Если пенсионер умер, все его заявления неактивны
-        if self.worker.status == 'pensioner' and self.worker.is_dead:
+        if self.worker.is_pensioner_like() and self.worker.is_dead:
             return 'cancelled'
         return 'active'
     
@@ -405,6 +425,7 @@ class FuneralRequest(models.Model):
     applicant_id_file = models.FileField('Удостоверение заявителя', upload_to='funeral/applicant_ids/', null=True, blank=True)
     account_type = models.CharField('Тип счета', max_length=20, choices=ACCOUNT_TYPE_CHOICES)
     account_number = models.CharField('Номер счета', max_length=25, blank=True)  # KZ + 20 цифр = 22 символа
+    account_file = models.FileField('Файл счета', upload_to='funeral/account_files/', null=True, blank=True)
     to_pay = models.DecimalField('К выплате', max_digits=10, decimal_places=2, null=True, blank=True)
     request_status = models.CharField('Статус заявления', max_length=20, choices=REQUEST_STATUS_CHOICES, default='active')
     
@@ -424,7 +445,7 @@ class FuneralRequest(models.Model):
         if self.request_status == 'inactive':
             return 'inactive'
         # Если пенсионер умер, все его заявления неактивны
-        if self.worker.status == 'pensioner' and self.worker.is_dead:
+        if self.worker.is_pensioner_like() and self.worker.is_dead:
             return 'cancelled'
         return 'active'
     

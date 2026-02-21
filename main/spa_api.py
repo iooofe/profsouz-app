@@ -301,6 +301,8 @@ def _serialize_vacation_request(item):
         'type': 'vacation',
         'worker_id': item.worker_id,
         'worker_name': item.worker.full_name,
+        'worker_status': item.worker.status,
+        'worker_status_display': item.worker.get_status_display(),
         'resort': item.resort,
         'resort_display': item.get_resort_display(),
         'start_date': _date_iso(item.start_date),
@@ -333,12 +335,16 @@ def _serialize_material_request(item):
         'type': 'material',
         'worker_id': item.worker_id,
         'worker_name': item.worker.full_name,
+        'worker_status': item.worker.status,
+        'worker_status_display': item.worker.get_status_display(),
         'assistance_type': item.assistance_type,
         'assistance_type_display': item.get_assistance_type_display(),
         'amount': float(item.amount) if item.amount is not None else None,
         'account_type': item.account_type,
         'account_type_display': item.get_account_type_display(),
         'account_number': account_number,
+        'account_file_url': item.account_file.url if item.account_file else None,
+        'account_file_name': item.account_file.name.split('/')[-1] if item.account_file else None,
         'status': item.get_status(),
         'status_text': item.get_status_display_text(),
         'request_status': item.request_status,
@@ -361,9 +367,13 @@ def _serialize_coal_request(item):
         'type': 'coal',
         'worker_id': item.worker_id,
         'worker_name': item.worker.full_name,
+        'worker_status': item.worker.status,
+        'worker_status_display': item.worker.get_status_display(),
         'account_type': item.account_type,
         'account_type_display': item.get_account_type_display(),
         'account_number': account_number,
+        'account_file_url': item.account_file.url if item.account_file else None,
+        'account_file_name': item.account_file.name.split('/')[-1] if item.account_file else None,
         'status': item.get_status(),
         'status_text': item.get_status_display_text(),
         'request_status': item.request_status,
@@ -386,11 +396,15 @@ def _serialize_funeral_request(item):
         'type': 'funeral',
         'worker_id': item.worker_id,
         'worker_name': item.worker.full_name,
+        'worker_status': item.worker.status,
+        'worker_status_display': item.worker.get_status_display(),
         'applicant_full_name': item.applicant_full_name,
         'applicant_inn': item.applicant_inn,
         'account_type': item.account_type,
         'account_type_display': item.get_account_type_display(),
         'account_number': account_number,
+        'account_file_url': item.account_file.url if item.account_file else None,
+        'account_file_name': item.account_file.name.split('/')[-1] if item.account_file else None,
         'status': item.get_status(),
         'status_text': item.get_status_display_text(),
         'request_status': item.request_status,
@@ -400,6 +414,26 @@ def _serialize_funeral_request(item):
         'detail_url': reverse('main:funeral_request_detail', args=[item.id]),
         'owner': item.user.username,
     }
+
+
+def _serialize_worker_reports(worker):
+    vacation = (
+        VacationRequest.objects.filter(worker=worker)
+        .select_related('worker', 'user')
+        .prefetch_related('family_members')
+        .defer('price')
+    )
+    material = MaterialAssistanceRequest.objects.filter(worker=worker).select_related('worker', 'user')
+    coal = CoalRequest.objects.filter(worker=worker).select_related('worker', 'user')
+    funeral = FuneralRequest.objects.filter(worker=worker).select_related('worker', 'user')
+
+    items = []
+    items.extend(_serialize_vacation_request(v) for v in vacation)
+    items.extend(_serialize_material_request(v) for v in material)
+    items.extend(_serialize_coal_request(v) for v in coal)
+    items.extend(_serialize_funeral_request(v) for v in funeral)
+    items.sort(key=lambda x: x.get('created_at_iso') or '', reverse=True)
+    return items
 
 
 @ensure_csrf_cookie
@@ -632,7 +666,11 @@ def api_worker_detail(request, worker_id):
     worker = _worker_scope_for_user(request.user, worker_id)
 
     if request.method == 'GET':
-        return JsonResponse({'success': True, 'worker': _serialize_worker(worker, include_family=True)})
+        return JsonResponse({
+            'success': True,
+            'worker': _serialize_worker(worker, include_family=True),
+            'reports': _serialize_worker_reports(worker),
+        })
 
     if request.method in ('DELETE',):
         worker_name = worker.full_name
@@ -728,7 +766,7 @@ def api_create_vacation_request(request):
     if not resort:
         return _api_error('Не выбран курорт')
 
-    if worker.status == 'pensioner' and resort in ['balkhash', 'discovery']:
+    if worker.is_pensioner_like() and resort in ['balkhash', 'discovery']:
         resort_name = dict(VacationRequest.RESORT_CHOICES).get(resort, resort)
         return _api_error(f'Пенсионеры не могут выбирать курорт "{resort_name}"')
 
@@ -863,6 +901,7 @@ def api_create_material_request(request):
     amount_raw = source.get('amount') or '0'
     account_type = source.get('account_type')
     account_number = (source.get('account_number') or '').strip()
+    account_file = request.FILES.get('account_file')
 
     if not assistance_type:
         return _api_error('Не выбран вид помощи')
@@ -877,7 +916,7 @@ def api_create_material_request(request):
     if not account_number[2:].isdigit():
         return _api_error('После KZ должны быть только цифры')
 
-    if worker.status == 'pensioner':
+    if worker.is_pensioner_like():
         if MaterialAssistanceRequest.objects.filter(worker=worker, assistance_type=assistance_type).exists():
             return _api_error('Повторное оформление запрещено: заявление на этот вид помощи уже существует')
         if assistance_type == 'treatment' and CoalRequest.objects.filter(worker=worker).exists():
@@ -892,12 +931,6 @@ def api_create_material_request(request):
             return _api_error('Сумма должна быть больше 0')
 
     with transaction.atomic():
-        if account_type == '20_digit':
-            worker.account_20_digit = account_number
-        else:
-            worker.current_account = account_number
-        worker.save()
-
         item = MaterialAssistanceRequest.objects.create(
             user=request.user,
             worker=worker,
@@ -905,6 +938,7 @@ def api_create_material_request(request):
             amount=amount_decimal,
             account_type=account_type,
             account_number=account_number,
+            account_file=account_file,
         )
 
     return JsonResponse({
@@ -948,17 +982,22 @@ def api_create_coal_request(request):
         return _api_error('Не выбран пенсионер')
 
     worker = _worker_scope_for_user(request.user, worker_id)
-    if worker.status != 'pensioner':
+    if not worker.is_pensioner_like():
         return _api_error('Заявление на уголь доступно только для пенсионеров')
 
     if CoalRequest.objects.filter(worker=worker).exists():
         return _api_error('Повторное оформление запрещено: для пенсионера уже есть заявление на уголь')
 
-    if MaterialAssistanceRequest.objects.filter(worker=worker, worker__status='pensioner', assistance_type='treatment').exists():
+    if MaterialAssistanceRequest.objects.filter(
+        worker=worker,
+        worker__status__in=Worker.PENSIONER_STATUS_CODES,
+        assistance_type='treatment',
+    ).exists():
         return _api_error('Нельзя оформить уголь: для пенсионера уже есть заявление на материальную помощь (лекарства)')
 
     account_type = source.get('account_type')
     account_number = (source.get('account_number') or '').strip()
+    account_file = request.FILES.get('account_file')
 
     if account_type not in dict(CoalRequest.ACCOUNT_TYPE_CHOICES):
         return _api_error('Некорректный тип счета')
@@ -977,11 +1016,6 @@ def api_create_coal_request(request):
             worker.house_passport_file = request.FILES['passport_file']
         if request.FILES.get('pensioner_id_file'):
             worker.pensioner_id_file = request.FILES['pensioner_id_file']
-
-        if account_type == '20_digit':
-            worker.account_20_digit = account_number
-        else:
-            worker.current_account = account_number
         worker.save()
 
         item = CoalRequest.objects.create(
@@ -989,6 +1023,7 @@ def api_create_coal_request(request):
             worker=worker,
             account_type=account_type,
             account_number=account_number,
+            account_file=account_file,
         )
 
     return JsonResponse({
@@ -1032,13 +1067,14 @@ def api_create_funeral_request(request):
         return _api_error('Не выбран пенсионер')
 
     worker = _worker_scope_for_user(request.user, worker_id)
-    if worker.status != 'pensioner':
+    if not worker.is_pensioner_like():
         return _api_error('Заявление на погребение доступно только для пенсионеров')
 
     applicant_full_name = (source.get('applicant_full_name') or '').strip()
     applicant_inn = ''.join(c for c in (source.get('applicant_inn') or '') if c.isdigit())
     account_type = source.get('account_type')
     account_number = (source.get('account_number') or '').strip()
+    account_file = request.FILES.get('account_file')
     death_date_raw = (source.get('death_date') or '').strip()
 
     if not applicant_full_name:
@@ -1084,6 +1120,7 @@ def api_create_funeral_request(request):
             applicant_inn=applicant_inn,
             account_type=account_type,
             account_number=account_number,
+            account_file=account_file,
         )
 
         if request.FILES.get('applicant_id_file'):

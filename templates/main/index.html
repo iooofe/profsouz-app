@@ -688,7 +688,7 @@
                                                 <span class="info-label">Вид помощи:</span>
                                                 <span class="info-value">{{ request.get_assistance_type_display }}</span>
                                             </div>
-                                            {% if request.worker.status != 'pensioner' %}
+                                            {% if request.worker.status != 'pensioner' and request.worker.status != 'regressnik_pensioner' %}
                                             <div class="report-card-info-item">
                                                 <span class="info-label">Сумма:</span>
                                                 <span class="info-value info-value-highlight">{{ request.amount|floatformat:0 }} ₸</span>
@@ -1723,9 +1723,11 @@
                     row.style.cursor = 'pointer';
                     row.onclick = () => showWorkerDetail(worker.id);
                     
-                    const statusBadge = worker.status === 'pensioner' ? 
-                        '<span class="status-badge status-pensioner">Пенсионер</span>' : 
-                        '<span class="status-badge status-worker">Работник</span>';
+                    const isPensionerLike = worker.status === 'pensioner' || worker.status === 'regressnik_pensioner';
+                    const statusLabel = worker.status_display || (isPensionerLike ? 'Пенсионер' : 'Работник');
+                    const statusBadge = isPensionerLike ?
+                        `<span class="status-badge status-pensioner">${statusLabel}</span>` :
+                        `<span class="status-badge status-worker">${statusLabel}</span>`;
                     
                     row.innerHTML = `
                         <td>${worker.full_name || '—'}</td>
@@ -2435,7 +2437,7 @@
         }
         
         // Для пенсионеров сумма не требуется (поле скрыто, но значение будет 0)
-        const isPensioner = workerStatus === 'pensioner';
+        const isPensioner = workerStatus === 'pensioner' || workerStatus === 'regressnik_pensioner';
         const isAmountVisible = amountGroup ? amountGroup.style.display !== 'none' : true;
         
         // Для пенсионеров не проверяем сумму (она будет 0)
@@ -2459,7 +2461,7 @@
         console.log('workerStatus =', workerStatus);
         
         // Если пенсионер, устанавливаем значение 0 и убеждаемся, что поля активны
-        if (workerStatus === 'pensioner') {
+        if (workerStatus === 'pensioner' || workerStatus === 'regressnik_pensioner') {
             // Активируем скрытое поле для assistance_type
             const assistanceTypePensioner = document.getElementById('assistance-type-pensioner');
             if (assistanceTypePensioner) {
@@ -2499,14 +2501,14 @@
             console.log('Валидация не прошла, блокируем отправку');
             event.preventDefault();
             // Возвращаем скрытое состояние для пенсионеров
-            if (workerStatus === 'pensioner' && amountGroup) {
+            if ((workerStatus === 'pensioner' || workerStatus === 'regressnik_pensioner') && amountGroup) {
                 amountGroup.style.display = 'none';
             }
             return false;
         }
         
         // Для пенсионеров еще раз убеждаемся, что значение установлено
-        if (workerStatus === 'pensioner' && amountInput) {
+        if ((workerStatus === 'pensioner' || workerStatus === 'regressnik_pensioner') && amountInput) {
             amountInput.value = '0';
             amountInput.disabled = false;
             amountInput.name = 'amount';
@@ -2602,7 +2604,7 @@
         // Скрываем/показываем опции курортов для пенсионеров
         const resortSelect = document.querySelector('select[name="resort"]');
         if (resortSelect) {
-            const isPensioner = status === 'pensioner';
+            const isPensioner = status === 'pensioner' || status === 'regressnik_pensioner';
             const balkhashOption = resortSelect.querySelector('option[value="balkhash"]');
             const discoveryOption = resortSelect.querySelector('option[value="discovery"]');
             
@@ -2947,7 +2949,7 @@
         const assistanceTypeSelect = document.getElementById('assistance-type');
         const amountGroup = document.getElementById('assistance-amount-group');
         const amountInput = document.getElementById('assistance-amount');
-        if (status === 'pensioner') {
+        if (status === 'pensioner' || status === 'regressnik_pensioner') {
             assistanceTypeSelect.innerHTML = '<option value="treatment">На лечение</option>';
             assistanceTypeSelect.value = 'treatment';
             assistanceTypeSelect.disabled = true;
@@ -3787,7 +3789,7 @@
                     .then(data => {
                         // Фильтруем только пенсионеров (учитываем как код статуса, так и отображаемое имя)
                         const pensioners = data.results.filter(worker => {
-                            if (worker.status === 'pensioner') return true;
+                            if (worker.status === 'pensioner' || worker.status === 'regressnik_pensioner') return true;
                             const display = (worker.status_display || '').toLowerCase();
                             return display.includes('пенсионер');
                         });
@@ -4106,7 +4108,7 @@
                     .then(data => {
                         // Фильтруем только пенсионеров (учитываем как код статуса, так и отображаемое имя)
                         const pensioners = data.results.filter(worker => {
-                            if (worker.status === 'pensioner') return true;
+                            if (worker.status === 'pensioner' || worker.status === 'regressnik_pensioner') return true;
                             const display = (worker.status_display || '').toLowerCase();
                             return display.includes('пенсионер');
                         });

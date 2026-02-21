@@ -146,7 +146,7 @@
                         </div>
                         {% endif %}
                     </div>
-                    {% if worker.status == 'pensioner' %}
+                    {% if worker.status == 'pensioner' or worker.status == 'regressnik_pensioner' %}
                     <div class="form-group">
                         <label class="form-label">{{ worker_form.is_dead.label }}</label>
                         {{ worker_form.is_dead }}
@@ -190,7 +190,7 @@
                                     <option value="child" {% if member.relationship == 'child' %}selected{% endif %}>Ребенок</option>
                                     <option value="parent" {% if member.relationship == 'parent' %}selected{% endif %}>Родитель</option>
                                     <option value="sibling" {% if member.relationship == 'sibling' %}selected{% endif %}>Брат/Сестра</option>
-                                    {% if worker.status == 'pensioner' %}
+                                    {% if worker.status == 'pensioner' or worker.status == 'regressnik_pensioner' %}
                                     <option value="grandchild" {% if member.relationship == 'grandchild' %}selected{% endif %}>Внук/Внучка</option>
                                     {% endif %}
                                     <option value="other" {% if member.relationship == 'other' %}selected{% endif %}>Другое</option>
@@ -235,7 +235,7 @@
                                     <option value="child">Ребенок</option>
                                     <option value="parent">Родитель</option>
                                     <option value="sibling">Брат/Сестра</option>
-                                    {% if worker.status == 'pensioner' %}
+                                    {% if worker.status == 'pensioner' or worker.status == 'regressnik_pensioner' %}
                                     <option value="grandchild">Внук/Внучка</option>
                                     {% endif %}
                                     <option value="other">Другое</option>
@@ -315,7 +315,7 @@
         
         function togglePensionerFields() {
             if (statusSelect && pensionerFields) {
-                if (statusSelect.value === 'pensioner') {
+                if (statusSelect.value === 'pensioner' || statusSelect.value === 'regressnik_pensioner') {
                     pensionerFields.style.display = 'block';
                 } else {
                     pensionerFields.style.display = 'none';
@@ -327,7 +327,7 @@
         
         // Функция для обновления опций степени родства в зависимости от статуса работника
         function updateRelationshipOptions() {
-            const isPensioner = statusSelect && statusSelect.value === 'pensioner';
+            const isPensioner = statusSelect && (statusSelect.value === 'pensioner' || statusSelect.value === 'regressnik_pensioner');
             const relationshipSelects = document.querySelectorAll('select[name^="family_"][name$="_relationship"]');
             
             relationshipSelects.forEach(select => {
@@ -494,4 +494,3 @@
     }
 </script>
 {% endblock %}
-

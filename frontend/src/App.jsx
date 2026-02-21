@@ -80,6 +80,8 @@ const ASSISTANCE_TYPE_OPTIONS = [
   { value: 'treatment', label: 'На лечение' },
 ];
 
+const PENSIONER_STATUSES = new Set(['pensioner', 'regressnik_pensioner']);
+
 function cn(...parts) {
   return parts.filter(Boolean).join(' ');
 }
@@ -111,6 +113,18 @@ function triggerDownload(url) {
 
 function toBooleanString(value) {
   return value ? 'true' : 'false';
+}
+
+function isPensionerStatus(status) {
+  return PENSIONER_STATUSES.has(status);
+}
+
+function normalizeKzAccountInput(value, allowEmpty = false) {
+  const raw = String(value ?? '').toUpperCase().replace(/\s+/g, '');
+  if (allowEmpty && raw === '') return '';
+  const body = raw.startsWith('KZ') ? raw.slice(2) : raw.replace(/^K?Z?/, '');
+  const digits = body.replace(/\D/g, '');
+  return `KZ${digits}`.slice(0, 20);
 }
 
 function useDebounce(value, delay = 300) {
@@ -487,6 +501,7 @@ function WorkersTab({ user, references, onRefreshReference }) {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [formState, setFormState] = useState(EMPTY_WORKER_FORM);
+  const [workerReports, setWorkerReports] = useState([]);
 
   const debouncedSearch = useDebounce(search, 250);
 
@@ -517,6 +532,7 @@ function WorkersTab({ user, references, onRefreshReference }) {
   const openCreate = () => {
     setEditingId(null);
     setFormError('');
+    setWorkerReports([]);
     setFormState({ ...EMPTY_WORKER_FORM, user_id: user.is_admin ? '' : user.id });
     setFormOpen(true);
   };
@@ -524,10 +540,12 @@ function WorkersTab({ user, references, onRefreshReference }) {
   const openEdit = async (id) => {
     setFormError('');
     setEditingId(id);
+    setWorkerReports([]);
     setSaving(false);
     try {
       const response = await apiFetch(`/api/v2/workers/${id}/`);
       const worker = response.worker;
+      setWorkerReports(response.reports || []);
       setFormState({
         ...EMPTY_WORKER_FORM,
         full_name: worker.full_name || '',
@@ -570,6 +588,7 @@ function WorkersTab({ user, references, onRefreshReference }) {
     setFormOpen(false);
     setEditingId(null);
     setFormError('');
+    setWorkerReports([]);
   };
 
   const saveWorker = async (event) => {
@@ -637,6 +656,13 @@ function WorkersTab({ user, references, onRefreshReference }) {
     }));
   };
 
+  const workerReportTypeLabel = {
+    vacation: 'Путевка',
+    material: 'Матпомощь',
+    coal: 'Уголь',
+    funeral: 'Погребение',
+  };
+
   return (
     <div className="stack">
       <div className="toolbar">
@@ -683,7 +709,7 @@ function WorkersTab({ user, references, onRefreshReference }) {
                       <td>{worker.personnel_number || '—'}</td>
                       <td>{worker.inn || '—'}</td>
                       <td>
-                        <span className={cn('badge', worker.status === 'pensioner' ? 'warn' : 'ok')}>
+                        <span className={cn('badge', isPensionerStatus(worker.status) ? 'warn' : 'ok')}>
                           {worker.status_display}
                         </span>
                       </td>
@@ -785,8 +811,14 @@ function WorkersTab({ user, references, onRefreshReference }) {
                   value={formState.status}
                   onChange={(e) => setFormState((prev) => ({ ...prev, status: e.target.value }))}
                 >
-                  <option value="worker">Работник</option>
-                  <option value="pensioner">Пенсионер</option>
+                  {(references?.worker_status_choices || [
+                    { value: 'worker', label: 'Работник' },
+                    { value: 'pensioner', label: 'Пенсионер' },
+                  ]).map((statusItem) => (
+                    <option key={statusItem.value} value={statusItem.value}>
+                      {statusItem.label}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label>
@@ -893,14 +925,24 @@ function WorkersTab({ user, references, onRefreshReference }) {
                 Карточный счет
                 <input
                   value={formState.account_20_digit}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, account_20_digit: e.target.value }))}
+                  onChange={(e) =>
+                    setFormState((prev) => ({
+                      ...prev,
+                      account_20_digit: normalizeKzAccountInput(e.target.value, true),
+                    }))
+                  }
                 />
               </label>
               <label>
                 Текущий счет
                 <input
                   value={formState.current_account}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, current_account: e.target.value }))}
+                  onChange={(e) =>
+                    setFormState((prev) => ({
+                      ...prev,
+                      current_account: normalizeKzAccountInput(e.target.value, true),
+                    }))
+                  }
                 />
               </label>
               <label>
@@ -1051,6 +1093,53 @@ function WorkersTab({ user, references, onRefreshReference }) {
                 ))}
               </div>
 
+              {editingId && (
+                <section className="report-detail-section">
+                  <div className="family-head">
+                    <h4>Связанные отчеты</h4>
+                    <span className="muted">Всего: {workerReports.length}</span>
+                  </div>
+                  {workerReports.length ? (
+                    <div className="table-wrap">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Тип</th>
+                            <th>Дата</th>
+                            <th>Статус</th>
+                            <th />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {workerReports.map((row) => (
+                            <tr key={`${row.type}-${row.id}`}>
+                              <td>{workerReportTypeLabel[row.type] || row.type}</td>
+                              <td>{row.created_at || '—'}</td>
+                              <td>
+                                <span className={cn('badge', row.status === 'active' ? 'ok' : 'warn')}>
+                                  {row.status_text || '—'}
+                                </span>
+                              </td>
+                              <td className="actions-cell">
+                                {row.download_url ? (
+                                  <a className="btn btn-secondary" href={row.download_url} target="_blank" rel="noreferrer">
+                                    <Download size={13} /> Скачать
+                                  </a>
+                                ) : (
+                                  '—'
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="muted">По этому работнику отчеты пока не создавались.</p>
+                  )}
+                </section>
+              )}
+
               {formError && <div className="error-banner">{formError}</div>}
 
               <div className="modal-actions">
@@ -1095,7 +1184,7 @@ function WorkerLookup({ label, pensionerOnly = false, onSelect, selectedWorker }
         const resp = await apiFetch(`/api/search-workers/?q=${encodeURIComponent(debounced)}`);
         let rows = resp.results || [];
         if (pensionerOnly) {
-          rows = rows.filter((w) => w.status === 'pensioner');
+          rows = rows.filter((w) => isPensionerStatus(w.status));
         }
         if (mounted) {
           setResults(rows);
@@ -1195,13 +1284,15 @@ function ApplicationsTab({ user }) {
     assistance_type: 'sick_leave',
     amount: '',
     account_type: '20_digit',
-    account_number: '',
+    account_number: 'KZ',
+    account_file: null,
   });
 
   const [coalWorker, setCoalWorker] = useState(null);
   const [coalData, setCoalData] = useState({
     account_type: '20_digit',
-    account_number: '',
+    account_number: 'KZ',
+    account_file: null,
     passport_file: null,
     pensioner_id_file: null,
   });
@@ -1211,7 +1302,8 @@ function ApplicationsTab({ user }) {
     applicant_full_name: '',
     applicant_inn: '',
     account_type: '20_digit',
-    account_number: '',
+    account_number: 'KZ',
+    account_file: null,
     death_date: '',
     applicant_id_file: null,
     death_certificate_file: null,
@@ -1305,15 +1397,20 @@ function ApplicationsTab({ user }) {
 
     setLoading(true);
     try {
+      const accountNumber = normalizeKzAccountInput(materialData.account_number);
+      const fd = new FormData();
+      fd.append('worker_id', materialWorker.id);
+      fd.append('assistance_type', materialData.assistance_type);
+      fd.append('amount', materialData.amount);
+      fd.append('account_type', materialData.account_type);
+      fd.append('account_number', accountNumber);
+      if (materialData.account_file) {
+        fd.append('account_file', materialData.account_file);
+      }
+
       const response = await apiFetch('/api/v2/applications/material/create/', {
         method: 'POST',
-        body: {
-          worker_id: materialWorker.id,
-          assistance_type: materialData.assistance_type,
-          amount: materialData.amount,
-          account_type: materialData.account_type,
-          account_number: materialData.account_number,
-        },
+        body: fd,
       });
 
       showResult('Заявление на материальную помощь создано');
@@ -1334,10 +1431,14 @@ function ApplicationsTab({ user }) {
 
     setLoading(true);
     try {
+      const accountNumber = normalizeKzAccountInput(coalData.account_number);
       const fd = new FormData();
       fd.append('worker_id', coalWorker.id);
       fd.append('account_type', coalData.account_type);
-      fd.append('account_number', coalData.account_number);
+      fd.append('account_number', accountNumber);
+      if (coalData.account_file) {
+        fd.append('account_file', coalData.account_file);
+      }
       if (coalData.passport_file) {
         fd.append('passport_file', coalData.passport_file);
       }
@@ -1367,13 +1468,17 @@ function ApplicationsTab({ user }) {
 
     setLoading(true);
     try {
+      const accountNumber = normalizeKzAccountInput(funeralData.account_number);
       const fd = new FormData();
       fd.append('worker_id', funeralWorker.id);
       fd.append('applicant_full_name', funeralData.applicant_full_name);
       fd.append('applicant_inn', funeralData.applicant_inn);
       fd.append('account_type', funeralData.account_type);
-      fd.append('account_number', funeralData.account_number);
+      fd.append('account_number', accountNumber);
       fd.append('death_date', funeralData.death_date);
+      if (funeralData.account_file) {
+        fd.append('account_file', funeralData.account_file);
+      }
       if (funeralData.applicant_id_file) {
         fd.append('applicant_id_file', funeralData.applicant_id_file);
       }
@@ -1661,9 +1766,20 @@ function ApplicationsTab({ user }) {
             Номер счета
             <input
               value={materialData.account_number}
-              onChange={(e) => setMaterialData((prev) => ({ ...prev, account_number: e.target.value }))}
+              onChange={(e) =>
+                setMaterialData((prev) => ({ ...prev, account_number: normalizeKzAccountInput(e.target.value) }))
+              }
               placeholder="KZ..."
+              maxLength={20}
               required
+            />
+          </label>
+
+          <label>
+            Прикрепить счет
+            <input
+              type="file"
+              onChange={(e) => setMaterialData((prev) => ({ ...prev, account_file: e.target.files?.[0] || null }))}
             />
           </label>
 
@@ -1709,9 +1825,20 @@ function ApplicationsTab({ user }) {
             Номер счета
             <input
               value={coalData.account_number}
-              onChange={(e) => setCoalData((prev) => ({ ...prev, account_number: e.target.value }))}
+              onChange={(e) =>
+                setCoalData((prev) => ({ ...prev, account_number: normalizeKzAccountInput(e.target.value) }))
+              }
               placeholder="KZ..."
+              maxLength={20}
               required
+            />
+          </label>
+
+          <label>
+            Прикрепить счет
+            <input
+              type="file"
+              onChange={(e) => setCoalData((prev) => ({ ...prev, account_file: e.target.files?.[0] || null }))}
             />
           </label>
 
@@ -1783,9 +1910,20 @@ function ApplicationsTab({ user }) {
             Номер счета
             <input
               value={funeralData.account_number}
-              onChange={(e) => setFuneralData((prev) => ({ ...prev, account_number: e.target.value }))}
+              onChange={(e) =>
+                setFuneralData((prev) => ({ ...prev, account_number: normalizeKzAccountInput(e.target.value) }))
+              }
               placeholder="KZ..."
+              maxLength={20}
               required
+            />
+          </label>
+
+          <label>
+            Прикрепить счет
+            <input
+              type="file"
+              onChange={(e) => setFuneralData((prev) => ({ ...prev, account_file: e.target.files?.[0] || null }))}
             />
           </label>
 
@@ -1835,6 +1973,7 @@ function ReportsTab({ user, references }) {
   const [typeFilter, setTypeFilter] = useState('all');
   const [enterpriseFilter, setEnterpriseFilter] = useState('all');
   const [enterpriseSort, setEnterpriseSort] = useState('default');
+  const [workerStatusSort, setWorkerStatusSort] = useState('default');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [detailData, setDetailData] = useState(null);
@@ -1869,6 +2008,14 @@ function ReportsTab({ user, references }) {
     load();
   }, [enterpriseFilter]);
 
+  const workerStatusOrder = useMemo(() => {
+    const map = {};
+    (references?.worker_status_choices || []).forEach((item, index) => {
+      map[item.value] = index;
+    });
+    return map;
+  }, [references]);
+
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     const filtered = rows.filter((row) => {
@@ -1876,30 +2023,49 @@ function ReportsTab({ user, references }) {
       const searchOk =
         !q ||
         (row.worker_name || '').toLowerCase().includes(q) ||
+        (row.worker_status_display || '').toLowerCase().includes(q) ||
         (row.owner || '').toLowerCase().includes(q) ||
         (row.status_text || '').toLowerCase().includes(q);
       return typeOk && searchOk;
     });
 
-    if (user.is_admin && enterpriseSort !== 'default') {
-      const direction = enterpriseSort === 'owner_desc' ? -1 : 1;
+    if (workerStatusSort !== 'default' || (user.is_admin && enterpriseSort !== 'default')) {
       filtered.sort((a, b) => {
-        const ownerA = String(a.owner || '').toLowerCase();
-        const ownerB = String(b.owner || '').toLowerCase();
-        const ownerCompare = ownerA.localeCompare(ownerB, 'ru');
-        if (ownerCompare !== 0) {
-          return ownerCompare * direction;
+        if (workerStatusSort !== 'default') {
+          const direction = workerStatusSort === 'desc' ? -1 : 1;
+          const orderA = workerStatusOrder[a.worker_status] ?? Number.MAX_SAFE_INTEGER;
+          const orderB = workerStatusOrder[b.worker_status] ?? Number.MAX_SAFE_INTEGER;
+          const orderCompare = orderA - orderB;
+          if (orderCompare !== 0) {
+            return orderCompare * direction;
+          }
+          const statusA = String(a.worker_status_display || '').toLowerCase();
+          const statusB = String(b.worker_status_display || '').toLowerCase();
+          const statusCompare = statusA.localeCompare(statusB, 'ru');
+          if (statusCompare !== 0) {
+            return statusCompare * direction;
+          }
+        }
+
+        if (user.is_admin && enterpriseSort !== 'default') {
+          const enterpriseDirection = enterpriseSort === 'owner_desc' ? -1 : 1;
+          const ownerA = String(a.owner || '').toLowerCase();
+          const ownerB = String(b.owner || '').toLowerCase();
+          const ownerCompare = ownerA.localeCompare(ownerB, 'ru');
+          if (ownerCompare !== 0) {
+            return ownerCompare * enterpriseDirection;
+          }
         }
         return String(b.created_at_iso || '').localeCompare(String(a.created_at_iso || ''));
       });
     }
 
     return filtered;
-  }, [rows, search, typeFilter, enterpriseSort, user.is_admin]);
+  }, [rows, search, typeFilter, workerStatusSort, enterpriseSort, workerStatusOrder, user.is_admin]);
 
   useEffect(() => {
     setPage(1);
-  }, [search, typeFilter, enterpriseSort, pageSize, rows.length]);
+  }, [search, typeFilter, workerStatusSort, enterpriseSort, pageSize, rows.length]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -2028,14 +2194,14 @@ function ReportsTab({ user, references }) {
           assistance_type: detail.assistance_details?.assistance_type_code || 'sick_leave',
           amount: detail.assistance_details?.amount !== undefined ? String(detail.assistance_details.amount ?? '') : '',
           account_type: detail.assistance_details?.account_type_code || '20_digit',
-          account_number: detail.assistance_details?.account_number || '',
+          account_number: normalizeKzAccountInput(detail.assistance_details?.account_number || ''),
         };
       }
 
       if (row.type === 'coal') {
         prepared.form = {
           account_type: detail.coal_details?.account_type_code || '20_digit',
-          account_number: detail.coal_details?.account_number || '',
+          account_number: normalizeKzAccountInput(detail.coal_details?.account_number || ''),
         };
       }
 
@@ -2044,7 +2210,7 @@ function ReportsTab({ user, references }) {
           applicant_full_name: detail.funeral_details?.applicant_full_name || '',
           applicant_inn: detail.funeral_details?.applicant_inn || '',
           account_type: detail.funeral_details?.account_type_code || '20_digit',
-          account_number: detail.funeral_details?.account_number || '',
+          account_number: normalizeKzAccountInput(detail.funeral_details?.account_number || ''),
           death_date: detail.funeral_details?.death_date_iso || '',
         };
       }
@@ -2114,13 +2280,13 @@ function ReportsTab({ user, references }) {
         assistance_type: editData.form.assistance_type,
         amount: editData.form.amount,
         account_type: editData.form.account_type,
-        account_number: editData.form.account_number,
+        account_number: normalizeKzAccountInput(editData.form.account_number),
       };
     }
     if (editData.type === 'coal') {
       payload = {
         account_type: editData.form.account_type,
-        account_number: editData.form.account_number,
+        account_number: normalizeKzAccountInput(editData.form.account_number),
       };
     }
     if (editData.type === 'funeral') {
@@ -2128,7 +2294,7 @@ function ReportsTab({ user, references }) {
         applicant_full_name: editData.form.applicant_full_name,
         applicant_inn: editData.form.applicant_inn,
         account_type: editData.form.account_type,
-        account_number: editData.form.account_number,
+        account_number: normalizeKzAccountInput(editData.form.account_number),
         death_date: editData.form.death_date,
       };
     }
@@ -2216,6 +2382,11 @@ function ReportsTab({ user, references }) {
                 <option value="owner_desc">Предприятие: Я-А</option>
               </select>
             )}
+            <select value={workerStatusSort} onChange={(e) => setWorkerStatusSort(e.target.value)}>
+              <option value="default">Статус работника: по умолчанию</option>
+              <option value="asc">Статус работника: по возрастанию</option>
+              <option value="desc">Статус работника: по убыванию</option>
+            </select>
             <select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value))}>
               <option value="10">10 на странице</option>
               <option value="20">20 на странице</option>
@@ -2239,6 +2410,7 @@ function ReportsTab({ user, references }) {
                     <th>Тип</th>
                     {user.is_admin && <th>Предприятие</th>}
                     <th>Работник</th>
+                    <th>Статус работника</th>
                     <th>Статус</th>
                     <th>Дата</th>
                     <th />
@@ -2250,6 +2422,11 @@ function ReportsTab({ user, references }) {
                       <td>{typeLabel[row.type] || row.type}</td>
                       {user.is_admin && <td>{row.owner || '—'}</td>}
                       <td>{row.worker_name}</td>
+                      <td>
+                        <span className={cn('badge', isPensionerStatus(row.worker_status) ? 'warn' : 'ok')}>
+                          {row.worker_status_display || '—'}
+                        </span>
+                      </td>
                       <td>
                         <span className={cn('badge', row.status === 'active' ? 'ok' : row.status === 'pending' ? 'warn' : '')}>
                           {row.status_text}
@@ -2284,7 +2461,7 @@ function ReportsTab({ user, references }) {
                   ))}
                   {filteredRows.length === 0 && (
                     <tr>
-                      <td colSpan={user.is_admin ? 6 : 5} className="empty-row">
+                      <td colSpan={user.is_admin ? 7 : 6} className="empty-row">
                         Нет данных
                       </td>
                     </tr>
@@ -2393,6 +2570,11 @@ function ReportsTab({ user, references }) {
                         { label: 'Сумма', value: detailData.assistance_details.amount, money: true },
                         { label: 'Тип счета', value: detailData.assistance_details.account_type },
                         { label: 'Номер счета', value: detailData.assistance_details.account_number },
+                        {
+                          label: 'Прикрепленный счет',
+                          value: detailData.assistance_details.account_file_name || 'Файл отсутствует',
+                          href: detailData.assistance_details.account_file_url || undefined,
+                        },
                         { label: 'Статус', value: detailData.assistance_details.status_text },
                       ])}
                     </section>
@@ -2404,6 +2586,11 @@ function ReportsTab({ user, references }) {
                       {renderDetailGrid([
                         { label: 'Тип счета', value: detailData.coal_details.account_type },
                         { label: 'Счет', value: detailData.coal_details.account_number },
+                        {
+                          label: 'Прикрепленный счет',
+                          value: detailData.coal_details.account_file_name || 'Файл отсутствует',
+                          href: detailData.coal_details.account_file_url || undefined,
+                        },
                         { label: 'Статус', value: detailData.coal_details.status_text },
                         {
                           label: 'Техпаспорт дома',
@@ -2427,6 +2614,11 @@ function ReportsTab({ user, references }) {
                         { label: 'ИИН заявителя', value: detailData.funeral_details.applicant_inn },
                         { label: 'Тип счета', value: detailData.funeral_details.account_type },
                         { label: 'Счет', value: detailData.funeral_details.account_number },
+                        {
+                          label: 'Прикрепленный счет',
+                          value: detailData.funeral_details.account_file_name || 'Файл отсутствует',
+                          href: detailData.funeral_details.account_file_url || undefined,
+                        },
                         { label: 'Дата смерти пенсионера', value: detailData.funeral_details.death_date },
                         { label: 'Статус', value: detailData.funeral_details.status_text },
                         {
@@ -2683,7 +2875,8 @@ function ReportsTab({ user, references }) {
                       Номер счета
                       <input
                         value={editData.form.account_number}
-                        onChange={(e) => updateEditField('account_number', e.target.value)}
+                        onChange={(e) => updateEditField('account_number', normalizeKzAccountInput(e.target.value))}
+                        maxLength={20}
                         required
                       />
                     </label>
@@ -2709,7 +2902,8 @@ function ReportsTab({ user, references }) {
                       Номер счета
                       <input
                         value={editData.form.account_number}
-                        onChange={(e) => updateEditField('account_number', e.target.value)}
+                        onChange={(e) => updateEditField('account_number', normalizeKzAccountInput(e.target.value))}
+                        maxLength={20}
                         required
                       />
                     </label>
@@ -2751,7 +2945,8 @@ function ReportsTab({ user, references }) {
                       Номер счета
                       <input
                         value={editData.form.account_number}
-                        onChange={(e) => updateEditField('account_number', e.target.value)}
+                        onChange={(e) => updateEditField('account_number', normalizeKzAccountInput(e.target.value))}
+                        maxLength={20}
                         required
                       />
                     </label>
@@ -2998,6 +3193,7 @@ function ListsTab({ user, references }) {
 
   const rows = data ? data[listConfigs[active].rowsKey] || [] : [];
   const hasIssuedColumn = user.is_admin && (active === 'coal' || active === 'pensioner');
+  const showEnterpriseColumn = user.is_admin && enterpriseFilter === 'all';
 
   const savePaymentField = async (row, field, value) => {
     if (!user.is_admin) return;
@@ -3094,6 +3290,7 @@ function ListsTab({ user, references }) {
       return [
         ['№', 'number'],
         ['ФИО', 'full_name'],
+        ['Статус работника', 'worker_status_display'],
         ['ИИН', 'inn'],
         ['Счет', 'account_number'],
         ['Банк', 'bank'],
@@ -3107,6 +3304,7 @@ function ListsTab({ user, references }) {
       return [
         ['№', 'number'],
         ['ФИО', 'full_name'],
+        ['Статус работника', 'worker_status_display'],
         ['ИИН', 'inn'],
         ['Счет', 'account_number'],
         ['Банк', 'bank'],
@@ -3123,6 +3321,7 @@ function ListsTab({ user, references }) {
         ['ИИН заявителя', 'applicant_inn'],
         ['Счет', 'account_number'],
         ['Пенсионер', 'pensioner_full_name'],
+        ['Статус работника', 'worker_status_display'],
         ['Банк', 'bank'],
         ['К выплате', 'to_pay'],
       ];
@@ -3131,6 +3330,7 @@ function ListsTab({ user, references }) {
       return [
         ['№', 'number'],
         ['ФИО', 'full_name'],
+        ['Статус работника', 'worker_status_display'],
         ['ИИН', 'inn'],
         ['Счет', 'account_number'],
         ['Банк', 'bank'],
@@ -3144,6 +3344,7 @@ function ListsTab({ user, references }) {
       return [
         ['№', 'number'],
         ['ФИО', 'full_name'],
+        ['Статус работника', 'worker_status_display'],
         ['ИИН', 'inn'],
         ['Счет', 'account_number'],
         ['Вид помощи', 'assistance_type'],
@@ -3156,6 +3357,7 @@ function ListsTab({ user, references }) {
     return [
       ['№', 'number'],
       ['ФИО', 'full_name'],
+      ['Статус работника', 'worker_status_display'],
       ['ИИН', 'inn'],
       ['Вид помощи', 'assistance_type'],
       ['Сумма', 'amount'],
@@ -3208,6 +3410,9 @@ function ListsTab({ user, references }) {
 
     if (query) {
       const searchableFields = columns.map(([, field]) => field);
+      if (showEnterpriseColumn) {
+        searchableFields.push('user_account');
+      }
       filtered = filtered.filter((row) =>
         searchableFields.some((field) => {
           const value = row[field];
@@ -3225,7 +3430,7 @@ function ListsTab({ user, references }) {
       filtered.sort((a, b) => sortRows(a[sortField], b[sortField]));
     }
     return filtered;
-  }, [rows, listSearch, columns, sortField, sortDirection]);
+  }, [rows, listSearch, columns, sortField, sortDirection, showEnterpriseColumn]);
 
   const onSortClick = (field) => {
     if (sortField !== field) {
@@ -3341,6 +3546,7 @@ function ListsTab({ user, references }) {
                     </th>
                   ))}
                   {hasIssuedColumn && <th>Выдано</th>}
+                  {showEnterpriseColumn && <th>Предприятие</th>}
                 </tr>
               </thead>
               <tbody>
@@ -3358,11 +3564,15 @@ function ListsTab({ user, references }) {
                         />
                       </td>
                     )}
+                    {showEnterpriseColumn && <td>{row.user_account || '—'}</td>}
                   </tr>
                 ))}
                 {visibleRows.length === 0 && (
                   <tr>
-                    <td colSpan={columns.length + (hasIssuedColumn ? 1 : 0)} className="empty-row">
+                    <td
+                      colSpan={columns.length + (hasIssuedColumn ? 1 : 0) + (showEnterpriseColumn ? 1 : 0)}
+                      className="empty-row"
+                    >
                       {listSearch.trim() ? 'По вашему запросу ничего не найдено' : 'Нет данных за период'}
                     </td>
                   </tr>

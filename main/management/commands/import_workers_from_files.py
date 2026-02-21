@@ -185,10 +185,16 @@ class Command(BaseCommand):
 
     def _detect_status(self, status_str: str) -> str:
         """
-        Определяем статус работника (worker/pensioner) по тексту в соответствующем столбце.
+        Определяем статус работника по тексту в соответствующем столбце.
         По умолчанию — worker.
         """
         s = (status_str or "").strip().lower()
+        if "регресс" in s and "пенсион" in s:
+            return "regressnik_pensioner"
+        if "регресс" in s and ("работ" in s or "рабоч" in s):
+            return "regressnik_worker"
+        if "регресс" in s:
+            return "regressnik"
         if "пенсион" in s:
             return "pensioner"
         return "worker"
@@ -501,5 +507,4 @@ class Command(BaseCommand):
             )
 
         return total_created, total_updated
-
 

@@ -309,10 +309,16 @@ class Command(BaseCommand):
         return True
 
     def _detect_status(self, status_str):
-        """Определяет статус работника (worker/pensioner)"""
+        """Определяет статус работника по тексту (с поддержкой регрессников)."""
         if not status_str:
             return "worker"
         s = str(status_str).strip().lower()
+        if "регресс" in s and "пенсион" in s:
+            return "regressnik_pensioner"
+        if "регресс" in s and ("работ" in s or "рабоч" in s):
+            return "regressnik_worker"
+        if "регресс" in s:
+            return "regressnik"
         if "пенсион" in s:
             return "pensioner"
         return "worker"
@@ -501,9 +507,18 @@ class Command(BaseCommand):
                 setattr(worker, field, incoming_value)
                 changed = True
 
-        # Статус можно только повышать до пенсионера, обратно не откатываем.
-        if incoming_fields.get("status") == "pensioner" and worker.status != "pensioner":
-            worker.status = "pensioner"
+        # Статус повышаем по приоритету (не откатываем к менее информативному).
+        status_priority = {
+            "worker": 10,
+            "regressnik_worker": 20,
+            "regressnik": 25,
+            "pensioner": 30,
+            "regressnik_pensioner": 40,
+        }
+        incoming_status = (incoming_fields.get("status") or "").strip()
+        current_status = (worker.status or "worker").strip()
+        if incoming_status in status_priority and status_priority.get(incoming_status, 0) > status_priority.get(current_status, 0):
+            worker.status = incoming_status
             changed = True
 
         # Флаги членства обновляем только в сторону True.
