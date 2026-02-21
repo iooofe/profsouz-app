@@ -936,7 +936,7 @@ def vacation_request_detail(request, request_id):
     if user_is_admin:
         vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id)
     else:
-        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id, user=request.user)
+        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id, worker__user=request.user)
     
     family_members = vacation.family_members.all()
     
@@ -1014,7 +1014,7 @@ def update_vacation_request(request, request_id):
     if user_is_admin:
         vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id)
     else:
-        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id, user=request.user)
+        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id, worker__user=request.user)
     
     if request.method == 'POST':
         is_rejected = request.POST.get('is_rejected') == 'true'
@@ -1518,7 +1518,10 @@ def generate_vacation_request_docx_standard(vacation):
 @login_required
 def download_vacation_request(request, request_id):
     """Скачивание печатного заявления в Word"""
-    vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id, user=request.user)
+    if is_admin(request.user):
+        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id)
+    else:
+        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id, worker__user=request.user)
     
     # Выбираем шаблон в зависимости от курорта
     if vacation.resort in ['zhartas', 'shakhter']:
@@ -1546,7 +1549,10 @@ def download_vacation_request(request, request_id):
 @login_required
 def download_study_certificate(request, request_id):
     """Скачивание справки об очном обучении"""
-    vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id, user=request.user)
+    if is_admin(request.user):
+        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id)
+    else:
+        vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id, worker__user=request.user)
     
     if not vacation.study_certificate_file:
         messages.error(request, 'Справка об очном обучении не найдена!')
@@ -2374,7 +2380,7 @@ def material_assistance_detail(request, request_id):
     if user_is_admin:
         material_assistance = get_object_or_404(MaterialAssistanceRequest, id=request_id)
     else:
-        material_assistance = get_object_or_404(MaterialAssistanceRequest, id=request_id, user=request.user)
+        material_assistance = get_object_or_404(MaterialAssistanceRequest, id=request_id, worker__user=request.user)
     
     # Генерируем предпросмотр заявления (для совместимости legacy-интерфейса)
     preview_html = generate_material_assistance_preview(material_assistance)
@@ -2420,7 +2426,10 @@ def material_assistance_detail(request, request_id):
 @login_required
 def download_material_assistance(request, request_id):
     """Скачивание печатного заявления на материальную помощь в Word"""
-    material_assistance = get_object_or_404(MaterialAssistanceRequest, id=request_id, user=request.user)
+    if is_admin(request.user):
+        material_assistance = get_object_or_404(MaterialAssistanceRequest, id=request_id)
+    else:
+        material_assistance = get_object_or_404(MaterialAssistanceRequest, id=request_id, worker__user=request.user)
     
     buffer = generate_material_assistance_docx(material_assistance)
     response = HttpResponse(
@@ -2629,7 +2638,7 @@ def coal_request_detail(request, request_id):
     if user_is_admin:
         coal_request = get_object_or_404(CoalRequest, id=request_id)
     else:
-        coal_request = get_object_or_404(CoalRequest, id=request_id, user=request.user)
+        coal_request = get_object_or_404(CoalRequest, id=request_id, worker__user=request.user)
     
     # Генерируем предпросмотр заявления (с обработкой ошибок)
     try:
@@ -2737,7 +2746,10 @@ def generate_coal_request_preview(coal_request):
 @login_required
 def download_coal_request(request, request_id):
     """Скачивание печатного заявления на уголь в Word"""
-    coal_request = get_object_or_404(CoalRequest, id=request_id, user=request.user)
+    if is_admin(request.user):
+        coal_request = get_object_or_404(CoalRequest, id=request_id)
+    else:
+        coal_request = get_object_or_404(CoalRequest, id=request_id, worker__user=request.user)
     
     buffer = generate_coal_request_docx(coal_request)
     response = HttpResponse(
@@ -2957,7 +2969,7 @@ def funeral_request_detail(request, request_id):
     if user_is_admin:
         funeral_request = get_object_or_404(FuneralRequest, id=request_id)
     else:
-        funeral_request = get_object_or_404(FuneralRequest, id=request_id, user=request.user)
+        funeral_request = get_object_or_404(FuneralRequest, id=request_id, worker__user=request.user)
     
     # Генерируем предпросмотр заявления
     preview_html = generate_funeral_request_preview(funeral_request)
@@ -3034,7 +3046,10 @@ def generate_funeral_request_preview(funeral_request):
 @login_required
 def download_funeral_request(request, request_id):
     """Скачивание печатного заявления на погребение в Word"""
-    funeral_request = get_object_or_404(FuneralRequest, id=request_id, user=request.user)
+    if is_admin(request.user):
+        funeral_request = get_object_or_404(FuneralRequest, id=request_id)
+    else:
+        funeral_request = get_object_or_404(FuneralRequest, id=request_id, worker__user=request.user)
     
     buffer = generate_funeral_request_docx(funeral_request)
     response = HttpResponse(
