@@ -12,6 +12,9 @@ def validate_phone_kz(value):
         return
     # Убираем все нецифровые символы кроме +
     cleaned = ''.join(c for c in value if c.isdigit() or c == '+')
+    # Разрешаем префикс по умолчанию в форме.
+    if cleaned in ('+7',):
+        return
     # Проверяем форматы: +7XXXXXXXXXX, 8XXXXXXXXXX, 7XXXXXXXXXX
     if cleaned.startswith('+7') and len(cleaned) == 12:
         return
@@ -54,6 +57,15 @@ class Worker(models.Model):
         (STATUS_REGRESSNIK_WORKER, 'Регрессник работник'),
         (STATUS_REGRESSNIK_PENSIONER, 'Регрессник пенсионер'),
     ]
+
+    ENTERPRISE_SUBDIVISION_ENERGOUGOL = 'energo_ugol'
+    ENTERPRISE_SUBDIVISION_PU = 'pu'
+    ENTERPRISE_SUBDIVISION_SVYAZ = 'svyaz'
+    ENTERPRISE_SUBDIVISION_CHOICES = [
+        (ENTERPRISE_SUBDIVISION_ENERGOUGOL, 'Энергоуголь'),
+        (ENTERPRISE_SUBDIVISION_PU, 'ПУ'),
+        (ENTERPRISE_SUBDIVISION_SVYAZ, 'Связь'),
+    ]
     
     YES_NO_CHOICES = [
         (True, 'Да'),
@@ -78,7 +90,8 @@ class Worker(models.Model):
         'Телефон',
         max_length=20,
         validators=[validate_phone_kz],
-        blank=True
+        blank=True,
+        default='+7',
     )
     address = models.TextField('Адрес', blank=True)
     
@@ -96,8 +109,17 @@ class Worker(models.Model):
     # Поля для заявления на уголь / счетов
     house_passport_file = models.FileField('Копия технического паспорта дома', upload_to='coal/passports/', null=True, blank=True)
     pensioner_id_file = models.FileField('Копия удостоверения пенсионера', upload_to='coal/pensioner_ids/', null=True, blank=True)
-    account_20_digit = models.CharField('Карточный счет (KZ + 18 цифр)', max_length=25, blank=True)  # KZ + 18 цифр = 20 символов
-    current_account = models.CharField('Текущий счет (KZ + 18 цифр)', max_length=25, blank=True)
+    account_20_digit = models.CharField('Карточный счет (KZ + 18 цифр)', max_length=25, blank=True, default='KZ')  # KZ + 18 цифр = 20 символов
+    current_account = models.CharField('Текущий счет (KZ + 18 цифр)', max_length=25, blank=True, default='KZ')
+    enterprise_subdivision = models.CharField(
+        'Подразделение (Энергоуголь)',
+        max_length=20,
+        choices=ENTERPRISE_SUBDIVISION_CHOICES,
+        blank=True,
+    )
+    regress_100_active = models.BooleanField('13.1 Регресс 100% (активно)', default=False)
+    regress_29_active = models.BooleanField('13.2 Регресс 29% (активно)', default=False)
+    regress_15_active = models.BooleanField('13.3 Регресс 15% (активно)', default=False)
     # Поля для заявления на погребение
     is_dead = models.BooleanField('Пенсионер мертв?', choices=YES_NO_CHOICES, default=False, null=True, blank=True)
     death_date = models.DateField('Дата смерти пенсионера', null=True, blank=True)
@@ -426,6 +448,7 @@ class FuneralRequest(models.Model):
     account_type = models.CharField('Тип счета', max_length=20, choices=ACCOUNT_TYPE_CHOICES)
     account_number = models.CharField('Номер счета', max_length=25, blank=True)  # KZ + 20 цифр = 22 символа
     account_file = models.FileField('Файл счета', upload_to='funeral/account_files/', null=True, blank=True)
+    recipient_account_file = models.FileField('Номер счета получателя (скан)', upload_to='funeral/recipient_account_files/', null=True, blank=True)
     to_pay = models.DecimalField('К выплате', max_digits=10, decimal_places=2, null=True, blank=True)
     request_status = models.CharField('Статус заявления', max_length=20, choices=REQUEST_STATUS_CHOICES, default='active')
     
@@ -469,6 +492,13 @@ class VacationLimit(models.Model):
     
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='vacation_limits', verbose_name='Пользователь')
     resort = models.CharField('Курорт', max_length=50, choices=RESORT_CHOICES, default='zhartas')
+    enterprise_subdivision = models.CharField(
+        'Подразделение (для Энергоугля)',
+        max_length=20,
+        choices=Worker.ENTERPRISE_SUBDIVISION_CHOICES,
+        blank=True,
+        default='',
+    )
     limit = models.PositiveIntegerField('Лимит', default=0)
     period_start = models.DateField('Начало периода')
     created_at = models.DateTimeField('Дата создания', auto_now_add=True)
@@ -478,11 +508,12 @@ class VacationLimit(models.Model):
     class Meta:
         verbose_name = 'Лимит на путевки'
         verbose_name_plural = 'Лимиты на путевки'
-        unique_together = [['user', 'period_start', 'resort']]
+        unique_together = [['user', 'period_start', 'resort', 'enterprise_subdivision']]
         ordering = ['-period_start']
     
     def __str__(self):
-        return f"Лимит {self.user.username} - {self.get_resort_display()} - {self.period_start}: {self.limit}"
+        suffix = f" [{self.get_enterprise_subdivision_display()}]" if self.enterprise_subdivision else ''
+        return f"Лимит {self.user.username} - {self.get_resort_display()}{suffix} - {self.period_start}: {self.limit}"
     
     @staticmethod
     def get_current_period_start():
@@ -498,19 +529,20 @@ class VacationLimit(models.Model):
         return date(period_start.year, period_start.month, min(30, last_day))
     
     @staticmethod
-    def get_or_create_limit(user, resort='zhartas'):
-        """Получает или создает лимит для текущего периода и указанного курорта"""
+    def get_or_create_limit(user, resort='zhartas', enterprise_subdivision=''):
+        """Получает или создает лимит для текущего периода и указанного курорта/подразделения."""
         period_start = VacationLimit.get_current_period_start()
         limit, created = VacationLimit.objects.get_or_create(
             user=user,
             period_start=period_start,
             resort=resort,
+            enterprise_subdivision=enterprise_subdivision or '',
             defaults={'limit': 0, 'is_initial': True}
         )
         return limit, created
     
     def get_used_places(self):
-        """Возвращает количество использованных мест в текущем периоде для данного курорта"""
+        """Возвращает использованный лимит в человеко-днях за период для курорта."""
         period_start = self.period_start
         period_end = VacationLimit.get_period_end(period_start)
         
@@ -522,10 +554,13 @@ class VacationLimit(models.Model):
             created_at__date__lte=period_end,
             is_rejected=False
         ).prefetch_related('family_members').defer('price')
+        if self.enterprise_subdivision:
+            requests = requests.filter(worker__enterprise_subdivision=self.enterprise_subdivision)
         
         total_places = 0
         for request in requests:
-            total_places += request.get_places_count()
+            days = max(request.get_duration_days(), 0)
+            total_places += request.get_places_count() * days
         
         return total_places
     

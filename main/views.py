@@ -31,6 +31,10 @@ EXCEL_STATUS_CLOSED_COLOR = "6E7888"
 EXCEL_TOTAL_FILL_COLOR = "F0F4FA"
 EXCEL_BORDER_COLOR = "D8DEE8"
 EXCEL_CURRENCY_FORMAT = '#,##0.00'
+WORKER_CATEGORY_ALL = 'all'
+WORKER_CATEGORY_WORKERS = 'workers'
+WORKER_CATEGORY_PENSIONERS = 'pensioners'
+WORKER_CATEGORY_REGRESS = 'regress'
 
 
 def is_admin(user):
@@ -127,6 +131,36 @@ def get_statement_period():
     return period_start, get_period_end_for_start(period_start)
 
 
+def get_worker_category_filter(request):
+    return (request.GET.get('worker_category') or WORKER_CATEGORY_ALL).strip()
+
+
+def get_account_type_filter(request):
+    return (request.GET.get('account_type_filter') or 'all').strip()
+
+
+def apply_worker_category_filter(queryset, category, status_field='worker__status'):
+    if category == WORKER_CATEGORY_WORKERS:
+        statuses = [Worker.STATUS_WORKER, Worker.STATUS_REGRESSNIK_WORKER]
+    elif category == WORKER_CATEGORY_PENSIONERS:
+        statuses = [Worker.STATUS_PENSIONER, Worker.STATUS_REGRESSNIK_PENSIONER]
+    elif category == WORKER_CATEGORY_REGRESS:
+        statuses = [
+            Worker.STATUS_REGRESSNIK,
+            Worker.STATUS_REGRESSNIK_WORKER,
+            Worker.STATUS_REGRESSNIK_PENSIONER,
+        ]
+    else:
+        return queryset
+    return queryset.filter(**{f'{status_field}__in': statuses})
+
+
+def apply_request_account_type_filter(queryset, account_type_filter):
+    if account_type_filter in {'20_digit', 'current'}:
+        return queryset.filter(account_type=account_type_filter)
+    return queryset
+
+
 def get_admin_selected_user_id(request):
     """Возвращает выбранный аккаунт для админских фильтров списков/отчетов."""
     if not is_admin(request.user):
@@ -164,7 +198,7 @@ def get_request_enterprise_name(request_obj):
 def get_enterprise_company_name(enterprise_name):
     """Возвращает отображаемое наименование компании с учетом исключений."""
     normalized = (enterprise_name or '').strip().upper()
-    if normalized in {'УТТ', 'КПТУ'}:
+    if normalized in {'УТТ', 'КПТУ', 'АДМИН'}:
         return 'АО «QARMЕТ»'
     return 'ТОО Karaganda komir'
 
@@ -710,12 +744,9 @@ def search_workers(request):
             'status_display': worker.get_status_display(),
             'department': worker.department or '',
             'position': worker.position or '',
-            'phone': worker.phone or '',
+            'phone': worker.phone or '+7',
             'is_dead': bool(worker.is_dead),
             'user_account': user_account,  # Аккаунт для админа (если есть связь с User)
-            # Подсказки по счетам из карточки работника
-            'card_account': getattr(worker, 'account_20_digit', '') or '',
-            'current_account': getattr(worker, 'current_account', '') or '',
             # Подсказки по счетам из карточки работника
             'card_account': getattr(worker, 'account_20_digit', '') or '',
             'current_account': getattr(worker, 'current_account', '') or '',
@@ -2100,8 +2131,10 @@ def create_material_assistance_request(request):
         
         # Получаем данные из формы
         assistance_type = request.POST.get('assistance_type')
-        account_type = request.POST.get('account_type')
-        account_number = request.POST.get('account_number', '').strip()
+        account_type = (request.POST.get('account_type') or '').strip()
+        account_number = (request.POST.get('account_number') or '').strip().upper().replace(' ', '')
+        if account_number == 'KZ':
+            account_number = ''
         # Для пенсионеров может быть скрытое поле, проверяем оба варианта
         amount = request.POST.get('amount', '0')
         if not amount or amount == '':
@@ -2111,22 +2144,46 @@ def create_material_assistance_request(request):
         if not assistance_type:
             messages.error(request, 'Не выбран вид помощи!')
             return redirect(f"{reverse('main:index')}?tab=applications")
-        if account_type not in dict(MaterialAssistanceRequest.ACCOUNT_TYPE_CHOICES):
-            messages.error(request, 'Некорректный тип счета!')
-            return redirect(f"{reverse('main:index')}?tab=applications")
+        account_choices = dict(MaterialAssistanceRequest.ACCOUNT_TYPE_CHOICES)
+        if account_type not in account_choices:
+            account_type = '20_digit'
         if not account_number:
-            messages.error(request, 'Не указан номер счета!')
-            return redirect(f"{reverse('main:index')}?tab=applications")
-        if not account_number.startswith('KZ'):
-            messages.error(request, 'Номер счета должен начинаться с KZ!')
-            return redirect(f"{reverse('main:index')}?tab=applications")
-        if len(account_number) != 20:
-            messages.error(request, 'Номер счета должен содержать KZ и 18 цифр (всего 20 символов)!')
-            return redirect(f"{reverse('main:index')}?tab=applications")
-        digits = account_number[2:]
-        if not digits.isdigit() or len(digits) != 18:
-            messages.error(request, 'После KZ должны быть только 18 цифр!')
-            return redirect(f"{reverse('main:index')}?tab=applications")
+            if account_type == '20_digit':
+                account_number = (worker.account_20_digit or '').strip()
+            else:
+                account_number = (worker.current_account or '').strip()
+        if not account_number and account_type == '20_digit':
+            account_number = (worker.current_account or '').strip()
+            account_type = 'current' if account_number else account_type
+        elif not account_number and account_type == 'current':
+            account_number = (worker.account_20_digit or '').strip()
+            account_type = '20_digit' if account_number else account_type
+
+        if worker.is_pensioner_like():
+            if not account_number:
+                messages.error(request, 'Не указан номер счета! Заполните счет в карточке работника или в заявлении.')
+                return redirect(f"{reverse('main:index')}?tab=applications")
+            if not account_number.startswith('KZ'):
+                messages.error(request, 'Номер счета должен начинаться с KZ!')
+                return redirect(f"{reverse('main:index')}?tab=applications")
+            if len(account_number) != 20:
+                messages.error(request, 'Номер счета должен содержать KZ и 18 цифр (всего 20 символов)!')
+                return redirect(f"{reverse('main:index')}?tab=applications")
+            digits = account_number[2:]
+            if not digits.isdigit() or len(digits) != 18:
+                messages.error(request, 'После KZ должны быть только 18 цифр!')
+                return redirect(f"{reverse('main:index')}?tab=applications")
+        elif account_number:
+            if not account_number.startswith('KZ'):
+                messages.error(request, 'Номер счета должен начинаться с KZ!')
+                return redirect(f"{reverse('main:index')}?tab=applications")
+            if len(account_number) != 20:
+                messages.error(request, 'Номер счета должен содержать KZ и 18 цифр (всего 20 символов)!')
+                return redirect(f"{reverse('main:index')}?tab=applications")
+            digits = account_number[2:]
+            if not digits.isdigit() or len(digits) != 18:
+                messages.error(request, 'После KZ должны быть только 18 цифр!')
+                return redirect(f"{reverse('main:index')}?tab=applications")
 
         # Запрет дублей и взаимоисключение для пенсионеров: уголь ↔ лекарства (на лечение)
         if worker.is_pensioner_like():
@@ -2526,30 +2583,41 @@ def create_coal_request(request):
             return redirect(f"{reverse('main:index')}?tab=applications")
         
         # Получаем данные из формы
-        account_type = request.POST.get('account_type')
-        account_number = request.POST.get('account_number', '').strip()
+        account_type = (request.POST.get('account_type') or '').strip()
+        account_number = (request.POST.get('account_number') or '').strip().upper().replace(' ', '')
+        if account_number == 'KZ':
+            account_number = ''
         
         # Валидация данных
-        if not account_type:
-            messages.error(request, 'Не выбран тип счета!')
+        account_choices = dict(CoalRequest.ACCOUNT_TYPE_CHOICES)
+        if account_type not in account_choices:
+            account_type = '20_digit'
+
+        if not account_number:
+            if account_type == '20_digit':
+                account_number = (worker.account_20_digit or '').strip()
+            else:
+                account_number = (worker.current_account or '').strip()
+        if not account_number and account_type == '20_digit':
+            account_number = (worker.current_account or '').strip()
+            account_type = 'current' if account_number else account_type
+        elif not account_number and account_type == 'current':
+            account_number = (worker.account_20_digit or '').strip()
+            account_type = '20_digit' if account_number else account_type
+
+        if not account_number:
+            messages.error(request, 'Не указан номер счета! Заполните счет в карточке пенсионера или в заявлении.')
             return redirect(f"{reverse('main:index')}?tab=applications")
-        
-        # Валидация счета (KZ + 18 цифр)
-        if account_type:
-            if not account_number:
-                messages.error(request, 'Не указан номер счета!')
-                return redirect(f"{reverse('main:index')}?tab=applications")
-            if not account_number.startswith('KZ'):
-                messages.error(request, 'Номер счета должен начинаться с KZ!')
-                return redirect(f"{reverse('main:index')}?tab=applications")
-            if len(account_number) != 20:
-                messages.error(request, 'Номер счета должен содержать KZ и 18 цифр (всего 20 символов)!')
-                return redirect(f"{reverse('main:index')}?tab=applications")
-            # Проверяем, что после KZ идут только цифры
-            digits = account_number[2:]
-            if not digits.isdigit() or len(digits) != 18:
-                messages.error(request, 'После KZ должны быть только 18 цифр!')
-                return redirect(f"{reverse('main:index')}?tab=applications")
+        if not account_number.startswith('KZ'):
+            messages.error(request, 'Номер счета должен начинаться с KZ!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
+        if len(account_number) != 20:
+            messages.error(request, 'Номер счета должен содержать KZ и 18 цифр (всего 20 символов)!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
+        digits = account_number[2:]
+        if not digits.isdigit() or len(digits) != 18:
+            messages.error(request, 'После KZ должны быть только 18 цифр!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
         
         # Создаем заявление
         try:
@@ -2823,8 +2891,10 @@ def create_funeral_request(request):
         # Получаем данные из формы
         applicant_full_name = request.POST.get('applicant_full_name', '').strip()
         applicant_inn = request.POST.get('applicant_inn', '').strip()
-        account_type = request.POST.get('account_type')
-        account_number = request.POST.get('account_number', '').strip()
+        account_type = (request.POST.get('account_type') or '').strip()
+        account_number = (request.POST.get('account_number') or '').strip().upper().replace(' ', '')
+        if account_number == 'KZ':
+            account_number = ''
         death_date_raw = request.POST.get('death_date', '').strip()
         
         # Валидация данных
@@ -2842,25 +2912,34 @@ def create_funeral_request(request):
             messages.error(request, 'ИИН должен содержать 12 цифр!')
             return redirect(f"{reverse('main:index')}?tab=applications")
         
-        if not account_type:
-            messages.error(request, 'Не выбран тип счета!')
+        account_choices = dict(FuneralRequest.ACCOUNT_TYPE_CHOICES)
+        if account_type not in account_choices:
+            account_type = '20_digit'
+        if not account_number:
+            if account_type == '20_digit':
+                account_number = (worker.account_20_digit or '').strip()
+            else:
+                account_number = (worker.current_account or '').strip()
+        if not account_number and account_type == '20_digit':
+            account_number = (worker.current_account or '').strip()
+            account_type = 'current' if account_number else account_type
+        elif not account_number and account_type == 'current':
+            account_number = (worker.account_20_digit or '').strip()
+            account_type = '20_digit' if account_number else account_type
+
+        if not account_number:
+            messages.error(request, 'Не указан номер счета! Заполните счет в карточке пенсионера или в заявлении.')
             return redirect(f"{reverse('main:index')}?tab=applications")
-        
-        # Валидация счета (KZ + 18 цифр) для любого типа
-        if account_type:
-            if not account_number:
-                messages.error(request, 'Не указан номер счета!')
-                return redirect(f"{reverse('main:index')}?tab=applications")
-            if not account_number.startswith('KZ'):
-                messages.error(request, 'Номер счета должен начинаться с KZ!')
-                return redirect(f"{reverse('main:index')}?tab=applications")
-            if len(account_number) != 20:
-                messages.error(request, 'Номер счета должен содержать KZ и 18 цифр (всего 20 символов)!')
-                return redirect(f"{reverse('main:index')}?tab=applications")
-            digits = account_number[2:]
-            if not digits.isdigit() or len(digits) != 18:
-                messages.error(request, 'После KZ должны быть только 18 цифр!')
-                return redirect(f"{reverse('main:index')}?tab=applications")
+        if not account_number.startswith('KZ'):
+            messages.error(request, 'Номер счета должен начинаться с KZ!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
+        if len(account_number) != 20:
+            messages.error(request, 'Номер счета должен содержать KZ и 18 цифр (всего 20 символов)!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
+        digits = account_number[2:]
+        if not digits.isdigit() or len(digits) != 18:
+            messages.error(request, 'После KZ должны быть только 18 цифр!')
+            return redirect(f"{reverse('main:index')}?tab=applications")
 
         death_date = None
         if death_date_raw:
@@ -2896,6 +2975,7 @@ def create_funeral_request(request):
                 account_type=account_type,
                 account_number=account_number,
                 account_file=request.FILES.get('account_file'),
+                recipient_account_file=request.FILES.get('recipient_account_file'),
             )
             
             # Обрабатываем удостоверение заявителя
@@ -3021,9 +3101,16 @@ def funeral_request_detail(request, request_id):
             'applicant_inn': funeral_request.applicant_inn,
             'account_type': funeral_request.get_account_type_display(),
             'account_type_code': funeral_request.account_type,
-            'account_number': funeral_request.account_number or '—',
+            'account_number': (
+                funeral_request.account_number
+                or funeral_request.worker.account_20_digit
+                or funeral_request.worker.current_account
+                or '—'
+            ),
             'account_file_url': funeral_request.account_file.url if funeral_request.account_file else None,
             'account_file_name': funeral_request.account_file.name.split('/')[-1] if funeral_request.account_file else None,
+            'recipient_account_file_url': funeral_request.recipient_account_file.url if funeral_request.recipient_account_file else None,
+            'recipient_account_file_name': funeral_request.recipient_account_file.name.split('/')[-1] if funeral_request.recipient_account_file else None,
             'death_date': funeral_request.worker.death_date.strftime('%d.%m.%Y') if funeral_request.worker.death_date else '—',
             'death_date_iso': funeral_request.worker.death_date.strftime('%Y-%m-%d') if funeral_request.worker.death_date else '',
             'status': funeral_request.get_status(),
@@ -3105,6 +3192,8 @@ def coal_compensation_list(request):
     """Отображение списка компенсации за уголь"""
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
+    worker_category = get_worker_category_filter(request)
+    account_type_filter = get_account_type_filter(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -3134,6 +3223,9 @@ def coal_compensation_list(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
+
+    coal_requests = apply_worker_category_filter(coal_requests, worker_category)
+    coal_requests = apply_request_account_type_filter(coal_requests, account_type_filter)
     
     # Подготавливаем данные для таблицы
     compensation_data = []
@@ -3217,6 +3309,8 @@ def coal_compensation_list(request):
         'status_display': status_display,
         'total_count': len(compensation_data),
         'unissued_count': unissued_count,
+        'worker_category': worker_category,
+        'account_type_filter': account_type_filter,
     })
 
 
@@ -3226,6 +3320,8 @@ def generate_coal_compensation_excel(request):
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
     enterprise_name = get_print_enterprise_name(request, selected_user_id)
+    worker_category = get_worker_category_filter(request)
+    account_type_filter = get_account_type_filter(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -3255,6 +3351,9 @@ def generate_coal_compensation_excel(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
+
+    coal_requests = apply_worker_category_filter(coal_requests, worker_category)
+    coal_requests = apply_request_account_type_filter(coal_requests, account_type_filter)
 
     # Ведомость на выдачу: только НЕвыданные
     if request.GET.get('only_unissued') in ('1', 'true', 'True'):
@@ -3296,7 +3395,8 @@ def generate_coal_compensation_excel(request):
     period_cell = ws['A2']
     period_cell.value = (
         f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}\n'
-        f'Предприятие: {enterprise_name}'
+        f'Предприятие: {enterprise_name}\n'
+        f'Вид помощи: Компенсация за уголь'
     )
     period_cell.font = Font(bold=True, size=12, name='Arial')
     period_cell.alignment = center_alignment
@@ -3457,6 +3557,8 @@ def bonus_payment_list(request):
     """Отображение списка на доплату за 3 степени к наградным знакам"""
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
+    worker_category = get_worker_category_filter(request)
+    account_type_filter = get_account_type_filter(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -3496,7 +3598,7 @@ def bonus_payment_list(request):
             # Показываем только тех, у кого уже были данные в предыдущих периодах
             base_query = base_query.filter(bonus_period_start__isnull=False)
         
-        workers = base_query.order_by('full_name')
+        workers = apply_worker_category_filter(base_query, worker_category, status_field='status').order_by('full_name')
     else:
         base_query = Worker.objects.filter(
             user=request.user,
@@ -3511,7 +3613,7 @@ def bonus_payment_list(request):
             current_period_start, current_period_end = get_coal_compensation_period()
             base_query = base_query.filter(bonus_period_start__isnull=False)
         
-        workers = base_query.order_by('full_name')
+        workers = apply_worker_category_filter(base_query, worker_category, status_field='status').order_by('full_name')
     
     # Подготавливаем данные для таблицы
     bonus_data = []
@@ -3524,11 +3626,14 @@ def bonus_payment_list(request):
         else:
             coal_request = CoalRequest.objects.filter(worker__user=request.user, worker=worker).order_by('-created_at').first()
         
+        resolved_account_type = ''
         if coal_request:
             if coal_request.account_type == '20_digit':
                 account_number = coal_request.account_number or worker.account_20_digit or ''
+                resolved_account_type = '20_digit'
             else:
                 account_number = coal_request.account_number or worker.current_account or ''
+                resolved_account_type = 'current'
         else:
             # Проверяем заявления на погребение (хотя для живых их не должно быть)
             if user_is_admin:
@@ -3539,11 +3644,17 @@ def bonus_payment_list(request):
             if funeral_request:
                 if funeral_request.account_type == '20_digit':
                     account_number = funeral_request.account_number or ''
+                    resolved_account_type = '20_digit'
                 else:
                     account_number = funeral_request.account_number or worker.current_account or ''
+                    resolved_account_type = 'current'
             else:
                 # Используем account_20_digit из карточки работника
                 account_number = worker.account_20_digit or worker.current_account or ''
+                resolved_account_type = '20_digit' if worker.account_20_digit else ('current' if worker.current_account else '')
+
+        if account_type_filter in {'20_digit', 'current'} and resolved_account_type != account_type_filter:
+            continue
         
         # Получаем льготы (если у пенсионера есть льготы, указываем название)
         # Для умерших пенсионеров не показываем льготы
@@ -3609,6 +3720,8 @@ def bonus_payment_list(request):
         'all_periods': [p.strftime('%Y-%m-%d') for p in all_periods],
         'status': status,
         'status_display': status_display,
+        'worker_category': worker_category,
+        'account_type_filter': account_type_filter,
     })
 
 
@@ -3618,6 +3731,8 @@ def generate_bonus_payment_excel(request):
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
     enterprise_name = get_print_enterprise_name(request, selected_user_id)
+    worker_category = get_worker_category_filter(request)
+    account_type_filter = get_account_type_filter(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -3655,7 +3770,7 @@ def generate_bonus_payment_excel(request):
             current_period_start, current_period_end = get_coal_compensation_period()
             base_query = base_query.filter(bonus_period_start__isnull=False)
         
-        workers = base_query.order_by('full_name')
+        workers = apply_worker_category_filter(base_query, worker_category, status_field='status').order_by('full_name')
     else:
         base_query = Worker.objects.filter(
             user=request.user,
@@ -3670,7 +3785,7 @@ def generate_bonus_payment_excel(request):
             current_period_start, current_period_end = get_coal_compensation_period()
             base_query = base_query.filter(bonus_period_start__isnull=False)
         
-        workers = base_query.order_by('full_name')
+        workers = apply_worker_category_filter(base_query, worker_category, status_field='status').order_by('full_name')
     
     # Создаем Excel файл
     wb = Workbook()
@@ -3708,7 +3823,8 @@ def generate_bonus_payment_excel(request):
     period_cell = ws['A2']
     period_cell.value = (
         f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}\n'
-        f'Предприятие: {enterprise_name}'
+        f'Предприятие: {enterprise_name}\n'
+        f'Вид помощи: Доплата за 3 степени'
     )
     period_cell.font = Font(bold=True, size=12, name='Arial')
     period_cell.alignment = center_alignment
@@ -3750,9 +3866,14 @@ def generate_bonus_payment_excel(request):
     # Данные
     row_num = 6
     
+    display_index = 1
+    total_accrued = 0.0
+    total_ipn = 0.0
+    total_to_pay = 0.0
     for worker in workers:
         # Получаем счет карты
         account_number = ''
+        resolved_account_type = ''
         coal_qs = CoalRequest.objects.filter(worker=worker)
         if not user_is_admin:
             coal_qs = coal_qs.filter(worker__user=request.user)
@@ -3761,8 +3882,10 @@ def generate_bonus_payment_excel(request):
         if coal_request:
             if coal_request.account_type == '20_digit':
                 account_number = coal_request.account_number or worker.account_20_digit or ''
+                resolved_account_type = '20_digit'
             else:
                 account_number = coal_request.account_number or worker.current_account or ''
+                resolved_account_type = 'current'
         else:
             funeral_qs = FuneralRequest.objects.filter(worker=worker)
             if not user_is_admin:
@@ -3772,10 +3895,16 @@ def generate_bonus_payment_excel(request):
             if funeral_request:
                 if funeral_request.account_type == '20_digit':
                     account_number = funeral_request.account_number or ''
+                    resolved_account_type = '20_digit'
                 else:
                     account_number = funeral_request.account_number or worker.current_account or ''
+                    resolved_account_type = 'current'
             else:
                 account_number = worker.account_20_digit or worker.current_account or ''
+                resolved_account_type = '20_digit' if worker.account_20_digit else ('current' if worker.current_account else '')
+
+        if account_type_filter in {'20_digit', 'current'} and resolved_account_type != account_type_filter:
+            continue
         
         # Проверяем, есть ли данные для текущего периода
         bonus_accrued = None
@@ -3785,9 +3914,15 @@ def generate_bonus_payment_excel(request):
             bonus_accrued = worker.bonus_accrued
             bonus_ipn = worker.bonus_ipn
             bonus_to_pay = worker.bonus_to_pay
+        if bonus_accrued:
+            total_accrued += float(bonus_accrued)
+        if bonus_ipn:
+            total_ipn += float(bonus_ipn)
+        if bonus_to_pay:
+            total_to_pay += float(bonus_to_pay)
         
         # Порядковый номер
-        ws.cell(row=row_num, column=1, value=row_num - 5).alignment = center_alignment
+        ws.cell(row=row_num, column=1, value=display_index).alignment = center_alignment
         
         # ФИО
         ws.cell(row=row_num, column=2, value=worker.full_name).alignment = left_alignment
@@ -3828,11 +3963,9 @@ def generate_bonus_payment_excel(request):
             ws.cell(row=row_num, column=col).border = border_style
         
         row_num += 1
+        display_index += 1
     
     # Итоговая строка
-    total_accrued = sum(float(w.bonus_accrued) if w.bonus_accrued and w.bonus_period_start == period_start else 0 for w in workers)
-    total_ipn = sum(float(w.bonus_ipn) if w.bonus_ipn and w.bonus_period_start == period_start else 0 for w in workers)
-    total_to_pay = sum(float(w.bonus_to_pay) if w.bonus_to_pay and w.bonus_period_start == period_start else 0 for w in workers)
     
     ws.cell(row=row_num, column=1, value='ИТОГО:').font = Font(bold=True)
     ws.cell(row=row_num, column=1).alignment = right_alignment
@@ -3894,6 +4027,8 @@ def funeral_services_list(request):
     """Отображение списка ритуальных услуг"""
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
+    worker_category = get_worker_category_filter(request)
+    account_type_filter = get_account_type_filter(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -3923,6 +4058,9 @@ def funeral_services_list(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
+
+    funeral_requests = apply_worker_category_filter(funeral_requests, worker_category)
+    funeral_requests = apply_request_account_type_filter(funeral_requests, account_type_filter)
     
     # Подготавливаем данные для таблицы
     funeral_data = []
@@ -3931,7 +4069,7 @@ def funeral_services_list(request):
         # Получаем счет карты
         account_number = ''
         if funeral_request.account_type == '20_digit':
-            account_number = funeral_request.account_number or ''
+            account_number = funeral_request.account_number or worker.account_20_digit or ''
         else:
             account_number = funeral_request.account_number or worker.current_account or ''
         
@@ -3982,6 +4120,8 @@ def funeral_services_list(request):
         'all_periods': [p.strftime('%Y-%m-%d') for p in all_periods],
         'status': status,
         'status_display': status_display,
+        'worker_category': worker_category,
+        'account_type_filter': account_type_filter,
     })
 
 
@@ -3991,6 +4131,8 @@ def generate_funeral_services_excel(request):
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
     enterprise_name = get_print_enterprise_name(request, selected_user_id)
+    worker_category = get_worker_category_filter(request)
+    account_type_filter = get_account_type_filter(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -4020,6 +4162,9 @@ def generate_funeral_services_excel(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
+
+    funeral_requests = apply_worker_category_filter(funeral_requests, worker_category)
+    funeral_requests = apply_request_account_type_filter(funeral_requests, account_type_filter)
     
     # Создаем Excel файл
     wb = Workbook()
@@ -4057,7 +4202,8 @@ def generate_funeral_services_excel(request):
     period_cell = ws['A2']
     period_cell.value = (
         f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}\n'
-        f'Предприятие: {enterprise_name}'
+        f'Предприятие: {enterprise_name}\n'
+        f'Вид помощи: Ритуальные услуги'
     )
     period_cell.font = Font(bold=True, size=12, name='Arial')
     period_cell.alignment = center_alignment
@@ -4103,7 +4249,7 @@ def generate_funeral_services_excel(request):
         # Получаем счет карты
         account_number = ''
         if funeral_request.account_type == '20_digit':
-            account_number = funeral_request.account_number or ''
+            account_number = funeral_request.account_number or funeral_request.worker.account_20_digit or ''
         else:
             account_number = funeral_request.account_number or funeral_request.worker.current_account or ''
         
@@ -4194,6 +4340,8 @@ def pensioner_material_assistance_list(request):
     """Отображение списка материальной помощи пенсионерам"""
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
+    worker_category = get_worker_category_filter(request)
+    account_type_filter = get_account_type_filter(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -4227,6 +4375,9 @@ def pensioner_material_assistance_list(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
+
+    material_requests = apply_worker_category_filter(material_requests, worker_category)
+    material_requests = apply_request_account_type_filter(material_requests, account_type_filter)
     
     # Подготавливаем данные для таблицы
     assistance_data = []
@@ -4255,7 +4406,7 @@ def pensioner_material_assistance_list(request):
             
             if funeral_request:
                 if funeral_request.account_type == '20_digit':
-                    account_number = funeral_request.account_number or ''
+                    account_number = funeral_request.account_number or worker.account_20_digit or ''
                 else:
                     account_number = funeral_request.account_number or worker.current_account or ''
             else:
@@ -4332,6 +4483,8 @@ def pensioner_material_assistance_list(request):
         'status_display': status_display,
         'total_count': len(assistance_data),
         'unissued_count': unissued_count,
+        'worker_category': worker_category,
+        'account_type_filter': account_type_filter,
     })
 
 
@@ -4340,6 +4493,8 @@ def material_assistance_registry_list(request):
     """Реестр (таблица) всех заявлений на материальную помощь"""
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
+    worker_category = get_worker_category_filter(request)
+    account_type_filter = get_account_type_filter(request)
 
     selected_period_start = request.GET.get('period_start')
     if selected_period_start:
@@ -4364,6 +4519,9 @@ def material_assistance_registry_list(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
+
+    material_requests = apply_worker_category_filter(material_requests, worker_category)
+    material_requests = apply_request_account_type_filter(material_requests, account_type_filter)
 
     registry_data = []
     for idx, req in enumerate(material_requests, 1):
@@ -4426,6 +4584,8 @@ def material_assistance_registry_list(request):
         'status_display': status_display,
         'total_count': len(registry_data),
         'unissued_count': unissued_count,
+        'worker_category': worker_category,
+        'account_type_filter': account_type_filter,
     })
 
 
@@ -4435,6 +4595,8 @@ def generate_material_assistance_registry_excel(request):
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
     enterprise_name = get_print_enterprise_name(request, selected_user_id)
+    worker_category = get_worker_category_filter(request)
+    account_type_filter = get_account_type_filter(request)
 
     selected_period_start = request.GET.get('period_start')
     if selected_period_start:
@@ -4459,6 +4621,9 @@ def generate_material_assistance_registry_excel(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
+
+    material_requests = apply_worker_category_filter(material_requests, worker_category)
+    material_requests = apply_request_account_type_filter(material_requests, account_type_filter)
 
     today = timezone.now().date()
     is_active_period = period_start <= today <= period_end
@@ -4498,7 +4663,8 @@ def generate_material_assistance_registry_excel(request):
         column=1,
         value=(
             f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}\n'
-            f'Предприятие: {enterprise_name}'
+            f'Предприятие: {enterprise_name}\n'
+            f'Вид помощи: Реестр материальной помощи'
         ),
     ).font = Font(bold=True, size=11, name='Arial')
     ws.cell(row=2, column=1).alignment = center_alignment
@@ -4617,6 +4783,8 @@ def generate_pensioner_material_assistance_excel(request):
     user_is_admin = is_admin(request.user)
     selected_user_id = get_admin_selected_user_id(request)
     enterprise_name = get_print_enterprise_name(request, selected_user_id)
+    worker_category = get_worker_category_filter(request)
+    account_type_filter = get_account_type_filter(request)
     
     # Проверяем, выбран ли конкретный период через GET параметр
     selected_period_start = request.GET.get('period_start')
@@ -4650,6 +4818,9 @@ def generate_pensioner_material_assistance_excel(request):
             created_at__date__gte=period_start,
             created_at__date__lte=period_end
         ).select_related('worker').order_by('worker__full_name')
+
+    material_requests = apply_worker_category_filter(material_requests, worker_category)
+    material_requests = apply_request_account_type_filter(material_requests, account_type_filter)
 
     # Ведомость на выдачу: только НЕвыданные
     if request.GET.get('only_unissued') in ('1', 'true', 'True'):
@@ -4691,7 +4862,8 @@ def generate_pensioner_material_assistance_excel(request):
     period_cell = ws['A2']
     period_cell.value = (
         f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}\n'
-        f'Предприятие: {enterprise_name}'
+        f'Предприятие: {enterprise_name}\n'
+        f'Вид помощи: Материальная помощь пенсионерам'
     )
     period_cell.font = Font(bold=True, size=12, name='Arial')
     period_cell.alignment = center_alignment
@@ -4756,7 +4928,7 @@ def generate_pensioner_material_assistance_excel(request):
             
             if funeral_request:
                 if funeral_request.account_type == '20_digit':
-                    account_number = funeral_request.account_number or ''
+                    account_number = funeral_request.account_number or worker.account_20_digit or ''
                 else:
                     account_number = funeral_request.account_number or worker.current_account or ''
             else:
@@ -5183,6 +5355,7 @@ def _request_payload(request):
 
 
 def _validate_kz_account_number(account_number):
+    account_number = _normalize_kz_account(account_number)
     if not account_number:
         return 'Не указан номер счета'
     if not account_number.startswith('KZ'):
@@ -5192,6 +5365,44 @@ def _validate_kz_account_number(account_number):
     if not account_number[2:].isdigit():
         return 'После KZ должны быть только цифры'
     return None
+
+
+def _normalize_kz_account(value):
+    raw = (value or '').upper().replace(' ', '')
+    if raw in ('', 'KZ'):
+        return ''
+    if raw.startswith('KZ'):
+        return raw
+    digits = ''.join(ch for ch in raw if ch.isdigit())
+    return f'KZ{digits}' if digits else ''
+
+
+def _resolve_account_type_and_number_from_worker(worker, requested_type, requested_number, allowed_choices):
+    account_type = (requested_type or '').strip()
+    account_number = _normalize_kz_account(requested_number)
+
+    if account_type not in allowed_choices:
+        if _normalize_kz_account(worker.account_20_digit):
+            account_type = '20_digit'
+        elif _normalize_kz_account(worker.current_account):
+            account_type = 'current'
+        else:
+            account_type = '20_digit'
+
+    if not account_number:
+        if account_type == '20_digit':
+            account_number = _normalize_kz_account(worker.account_20_digit)
+        else:
+            account_number = _normalize_kz_account(worker.current_account)
+
+    if not account_number and account_type == '20_digit':
+        account_number = _normalize_kz_account(worker.current_account)
+        account_type = 'current' if account_number else account_type
+    elif not account_number and account_type == 'current':
+        account_number = _normalize_kz_account(worker.account_20_digit)
+        account_type = '20_digit' if account_number else account_type
+
+    return account_type, account_number
 
 
 @login_required
@@ -5212,25 +5423,34 @@ def edit_material_assistance_request(request, request_id):
     payload = _request_payload(request)
 
     assistance_type = (payload.get('assistance_type') or material_request.assistance_type or '').strip()
-    account_type = (payload.get('account_type') or material_request.account_type or '').strip()
-    account_number = (payload.get('account_number') or material_request.account_number or '').strip()
+    allowed_choices = dict(MaterialAssistanceRequest.ACCOUNT_TYPE_CHOICES)
+    account_type, account_number = _resolve_account_type_and_number_from_worker(
+        material_request.worker,
+        payload.get('account_type') or material_request.account_type,
+        payload.get('account_number') or material_request.account_number,
+        allowed_choices,
+    )
     amount_raw = payload.get('amount')
 
     if assistance_type not in dict(MaterialAssistanceRequest.ASSISTANCE_TYPE_CHOICES):
         return JsonResponse({'error': 'Некорректный вид помощи'}, status=400)
-    if account_type not in dict(MaterialAssistanceRequest.ACCOUNT_TYPE_CHOICES):
+    if account_type not in allowed_choices:
         return JsonResponse({'error': 'Некорректный тип счета'}, status=400)
-
-    account_error = _validate_kz_account_number(account_number)
-    if account_error:
-        return JsonResponse({'error': account_error}, status=400)
 
     worker = material_request.worker
     if worker.is_pensioner_like():
+        account_error = _validate_kz_account_number(account_number)
+        if account_error:
+            return JsonResponse({'error': account_error}, status=400)
         if assistance_type != 'treatment':
             return JsonResponse({'error': 'Для пенсионеров доступна только помощь на лечение'}, status=400)
         amount_decimal = Decimal('0')
     else:
+        # Для работников поля счета скрыты, но если счет найден/введен, сохраняем его.
+        if account_number:
+            account_error = _validate_kz_account_number(account_number)
+            if account_error:
+                return JsonResponse({'error': account_error}, status=400)
         if amount_raw in (None, ''):
             amount_raw = material_request.amount
         try:
@@ -5265,10 +5485,15 @@ def edit_coal_request(request, request_id):
         return JsonResponse({'error': 'Неактивное заявление нельзя редактировать'}, status=400)
 
     payload = _request_payload(request)
-    account_type = (payload.get('account_type') or coal_request.account_type or '').strip()
-    account_number = (payload.get('account_number') or coal_request.account_number or '').strip()
+    allowed_choices = dict(CoalRequest.ACCOUNT_TYPE_CHOICES)
+    account_type, account_number = _resolve_account_type_and_number_from_worker(
+        coal_request.worker,
+        payload.get('account_type') or coal_request.account_type,
+        payload.get('account_number') or coal_request.account_number,
+        allowed_choices,
+    )
 
-    if account_type not in dict(CoalRequest.ACCOUNT_TYPE_CHOICES):
+    if account_type not in allowed_choices:
         return JsonResponse({'error': 'Некорректный тип счета'}, status=400)
     account_error = _validate_kz_account_number(account_number)
     if account_error:
@@ -5299,15 +5524,20 @@ def edit_funeral_request(request, request_id):
     payload = _request_payload(request)
     applicant_full_name = (payload.get('applicant_full_name') or funeral_request.applicant_full_name or '').strip()
     applicant_inn = ''.join(c for c in (payload.get('applicant_inn') or funeral_request.applicant_inn or '') if c.isdigit())
-    account_type = (payload.get('account_type') or funeral_request.account_type or '').strip()
-    account_number = (payload.get('account_number') or funeral_request.account_number or '').strip()
+    allowed_choices = dict(FuneralRequest.ACCOUNT_TYPE_CHOICES)
+    account_type, account_number = _resolve_account_type_and_number_from_worker(
+        funeral_request.worker,
+        payload.get('account_type') or funeral_request.account_type,
+        payload.get('account_number') or funeral_request.account_number,
+        allowed_choices,
+    )
     death_date_raw = (payload.get('death_date') or '').strip()
 
     if not applicant_full_name:
         return JsonResponse({'error': 'Не указано ФИО заявителя'}, status=400)
     if len(applicant_inn) != 12:
         return JsonResponse({'error': 'ИИН должен содержать 12 цифр'}, status=400)
-    if account_type not in dict(FuneralRequest.ACCOUNT_TYPE_CHOICES):
+    if account_type not in allowed_choices:
         return JsonResponse({'error': 'Некорректный тип счета'}, status=400)
     account_error = _validate_kz_account_number(account_number)
     if account_error:

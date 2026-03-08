@@ -30,6 +30,7 @@ urlpatterns = [
     path('api/v2/applications/funeral/create/', spa_api.api_create_funeral_request, name='api_v2_create_funeral_request'),
     path('api/v2/vacation-limits/', spa_api.api_vacation_limits, name='api_v2_vacation_limits'),
     path('api/v2/reports/', spa_api.api_reports, name='api_v2_reports'),
+    path('api/v2/appeals/', spa_api.api_appeals, name='api_v2_appeals'),
     path('api/v2/statements/', spa_api.api_statements, name='api_v2_statements'),
 
     # Existing API and document endpoints (legacy-compatible)

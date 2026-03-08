@@ -199,6 +199,93 @@ class Command(BaseCommand):
             return "pensioner"
         return "worker"
 
+    def _apply_worker_fields(self, worker, parsed_data):
+        """Дополняет существующего работника только пустыми полями."""
+        changed = False
+
+        fields_to_fill = ['full_name', 'inn', 'department', 'position', 'phone', 'address']
+        for field in fields_to_fill:
+            value = parsed_data.get(field, '')
+            if value and not getattr(worker, field):
+                setattr(worker, field, value)
+                changed = True
+
+        status = parsed_data.get('status')
+        if status and worker.status != status:
+            worker.status = status
+            changed = True
+
+        is_union_member = parsed_data.get('is_union_member')
+        if is_union_member and not worker.is_union_member:
+            worker.is_union_member = True
+            worker.is_contract_member = True
+            changed = True
+
+        if changed:
+            fields_to_save = fields_to_fill + ['status', 'is_union_member', 'is_contract_member']
+            worker.save(update_fields=fields_to_save)
+
+    def _find_existing_worker(self, user, personnel_number, full_name):
+        """Ищет существующего работника по надежным комбинациям."""
+        if personnel_number:
+            qs = Worker.objects.filter(user=user, personnel_number=personnel_number)
+            if qs.exists():
+                if qs.count() > 1:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f"  ⚠ Найдено несколько записей для таб.№ {personnel_number}, обновлена первая из них"
+                        )
+                    )
+                return qs.first()
+
+        if full_name:
+            qs = Worker.objects.filter(user=user, full_name=full_name)
+            if qs.exists():
+                if qs.count() > 1:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f"  ⚠ Найдено несколько работников с ФИО {full_name} без табеля, пропускаю строку для безопасной синхронизации"
+                        )
+                    )
+                    return None
+                return qs.first()
+
+        return None
+
+    def _upsert_worker(self, user, parsed_data):
+        """Создает/дополняет работника без потери ранее заполненных полей."""
+        personnel_number = parsed_data.get('personnel_number') or ''
+        full_name = parsed_data.get('full_name') or ''
+
+        if not personnel_number and not full_name:
+            return None, False
+
+        worker = self._find_existing_worker(user, personnel_number, full_name)
+
+        if worker:
+            self._apply_worker_fields(worker, parsed_data)
+            return worker, False
+
+        worker_defaults = {
+            'personnel_number': personnel_number,
+            'full_name': full_name,
+            'inn': parsed_data.get('inn', ''),
+            'status': parsed_data.get('status', 'worker'),
+            'is_union_member': parsed_data.get('is_union_member', False),
+            'department': parsed_data.get('department', ''),
+            'position': parsed_data.get('position', ''),
+            'is_contract_member': parsed_data.get('is_union_member', False),
+            'phone': parsed_data.get('phone', ''),
+            'address': parsed_data.get('address', ''),
+        }
+
+        created_worker = Worker.objects.create(user=user, **worker_defaults)
+        return created_worker, True
+
+    def _detect_status_from_cells(self, cells):
+        all_text = ' '.join((cell.text or '').strip().lower() for cell in cells)
+        return self._detect_status(all_text)
+
     def _import_from_docx(self, path: Path, user: User):
         """
         Ищем подходящую таблицу во всех таблицах файла и импортируем строки.
@@ -314,14 +401,14 @@ class Command(BaseCommand):
                         cells = row.cells
                         if len(cells) < 2:
                             continue
-                        
+
                         # Пробуем разные варианты позиций столбцов
                         # Вариант 1: № | таб.№ | фамилия | имя | отчество
                         personnel_number = ""
                         last_name = ""
                         first_name = ""
                         middle_name = ""
-                        
+
                         # Табельный номер может быть в колонке 0, 1 или 2
                         # Сначала проверяем колонку 1 (вторая колонка, после №)
                         if len(cells) > 1:
@@ -371,7 +458,7 @@ class Command(BaseCommand):
                                                 first_name = name_parts[1]
                                             if len(name_parts) >= 3:
                                                 middle_name = name_parts[2]
-                        
+
                         full_name = " ".join(
                             part
                             for part in [last_name, first_name, middle_name]
@@ -381,7 +468,7 @@ class Command(BaseCommand):
                         # Пропускаем пустые строки или строки без данных
                         if not full_name and not personnel_number:
                             continue
-                        
+
                         # Пропускаем строки, которые похожи на заголовки
                         if full_name and any(word in full_name.lower() for word in ["таб", "фамилия", "имя", "отчество", "фио", "№", "номер"]):
                             continue
@@ -390,26 +477,25 @@ class Command(BaseCommand):
                         # дата присоединения обычно в последней колонке
                         union_date_str = cells[-1].text.strip() if cells else ""
 
-                        status = "worker"
+                        status_text = self._detect_status_from_cells(cells)
+                        status = self._detect_status(status_text)
                         is_union_member = self._parse_union_flag(union_date_str)
 
-                        worker_defaults = {
+                        worker_data = {
                             "full_name": full_name,
+                            "personnel_number": personnel_number,
                             "inn": "",
                             "status": status,
                             "is_union_member": is_union_member,
                             "department": "",
                             "position": position,
-                            "is_contract_member": is_union_member,
                             "phone": "",
                             "address": "",
                         }
 
-                        worker, was_created = Worker.objects.update_or_create(
-                            user=user,
-                            personnel_number=personnel_number,
-                            defaults=worker_defaults,
-                        )
+                        worker, was_created = self._upsert_worker(user, worker_data)
+                        if worker is None:
+                            continue
 
                         if was_created:
                             created += 1
@@ -428,7 +514,7 @@ class Command(BaseCommand):
 
                     total_created += created
                     total_updated += updated
-                continue
+                    continue
 
             any_table_processed = True
             created = 0
@@ -437,6 +523,7 @@ class Command(BaseCommand):
             for row in table.rows[start_data_row_idx:]:
                 if has_full:
                     full_name = self._get_cell(row, col_index, "full_name")
+                    personnel_number = self._get_cell(row, col_index, "personnel_number")
                 else:
                     last_name = self._get_cell(row, col_index, "last_name")
                     first_name = self._get_cell(row, col_index, "first_name")
@@ -463,23 +550,26 @@ class Command(BaseCommand):
                 status = self._detect_status(status_text)
                 is_union_member = self._parse_union_flag(union_date_str)
 
-                worker_defaults = {
+                worker_data = {
                     "full_name": full_name,
+                    "personnel_number": personnel_number,
                     "inn": inn or "",
                     "status": status,
                     "is_union_member": is_union_member,
                     "department": department or "",
                     "position": position or "",
-                    "is_contract_member": is_union_member,
                     "phone": phone or "",
                     "address": address or "",
                 }
 
-                worker, was_created = Worker.objects.update_or_create(
-                    user=user,
-                    personnel_number=personnel_number,
-                    defaults=worker_defaults,
-                )
+                worker, was_created = self._upsert_worker(user, worker_data)
+                if worker is None:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f"  ⚠ Пропущена строка: не удалось однозначно сопоставить работника {full_name or 'без ФИО'} ({personnel_number or 'без табеля'})"
+                        )
+                    )
+                    continue
 
                 if was_created:
                     created += 1
@@ -507,4 +597,3 @@ class Command(BaseCommand):
             )
 
         return total_created, total_updated
-

@@ -33,6 +33,10 @@ def is_admin(user):
     return user.username == 'АДМИН' or user.is_staff or user.is_superuser
 
 
+def is_energougol_user(user):
+    return (getattr(user, 'username', '') or '').strip().upper() == 'ЭНЕРГОУГОЛЬ'
+
+
 def api_login_required(view_func):
     def _wrapped(request, *args, **kwargs):
         if not request.user.is_authenticated:
@@ -51,6 +55,66 @@ def _parse_bool(value):
     if value is None:
         return False
     return str(value).strip().lower() in ('1', 'true', 'yes', 'да', 'y', 'on')
+
+
+def _normalize_phone_with_default(value):
+    text = (value or '').strip()
+    return text or '+7'
+
+
+def _normalize_kz_account(value):
+    raw = (value or '').upper().replace(' ', '')
+    if raw in ('', 'KZ'):
+        return ''
+    if raw.startswith('KZ'):
+        return raw
+    body = ''.join(ch for ch in raw if ch.isdigit())
+    return f'KZ{body}' if body else ''
+
+
+def _validate_kz_account_or_error(account_number):
+    if not account_number:
+        return 'Не указан номер счета'
+    if not account_number.startswith('KZ'):
+        return 'Номер счета должен начинаться с KZ'
+    if len(account_number) != 20:
+        return 'Номер счета должен содержать KZ и 18 цифр'
+    if not account_number[2:].isdigit():
+        return 'После KZ должны быть только цифры'
+    return None
+
+
+def _resolve_account_by_type(worker, account_type):
+    if account_type == '20_digit':
+        return (worker.account_20_digit or '').strip()
+    if account_type == 'current':
+        return (worker.current_account or '').strip()
+    return ''
+
+
+def _resolve_account_type_and_number(worker, requested_type, requested_number, allowed_types):
+    account_type = (requested_type or '').strip()
+    account_number = _normalize_kz_account(requested_number)
+
+    if account_type not in allowed_types:
+        if _normalize_kz_account(worker.account_20_digit):
+            account_type = '20_digit'
+        elif _normalize_kz_account(worker.current_account):
+            account_type = 'current'
+        else:
+            account_type = '20_digit'
+
+    if not account_number:
+        account_number = _normalize_kz_account(_resolve_account_by_type(worker, account_type))
+
+    if not account_number and account_type == '20_digit':
+        account_number = _normalize_kz_account(worker.current_account)
+        account_type = 'current' if account_number else account_type
+    elif not account_number and account_type == 'current':
+        account_number = _normalize_kz_account(worker.account_20_digit)
+        account_type = '20_digit' if account_number else account_type
+
+    return account_type, account_number
 
 
 def _json_payload(request):
@@ -133,7 +197,7 @@ def _serialize_worker(worker, include_family=False):
         'department': worker.department or '',
         'position': worker.position or '',
         'is_contract_member': bool(worker.is_contract_member),
-        'phone': worker.phone or '',
+        'phone': worker.phone or '+7',
         'address': worker.address or '',
         'id_number': worker.id_number or '',
         'id_issue_date': _date_iso(worker.id_issue_date),
@@ -141,8 +205,13 @@ def _serialize_worker(worker, include_family=False):
         'has_benefits': bool(worker.has_benefits),
         'benefits_name': worker.benefits_name or '',
         'has_miner_glory': bool(worker.has_miner_glory),
-        'account_20_digit': worker.account_20_digit or '',
-        'current_account': worker.current_account or '',
+        'account_20_digit': worker.account_20_digit or 'KZ',
+        'current_account': worker.current_account or 'KZ',
+        'enterprise_subdivision': worker.enterprise_subdivision or '',
+        'enterprise_subdivision_display': worker.get_enterprise_subdivision_display() if worker.enterprise_subdivision else '',
+        'regress_100_active': bool(worker.regress_100_active),
+        'regress_29_active': bool(worker.regress_29_active),
+        'regress_15_active': bool(worker.regress_15_active),
         'is_dead': bool(worker.is_dead),
         'death_date': _date_iso(worker.death_date),
         'death_date_display': _date_human(worker.death_date),
@@ -387,7 +456,7 @@ def _serialize_coal_request(item):
 
 def _serialize_funeral_request(item):
     if item.account_type == '20_digit':
-        account_number = item.account_number or ''
+        account_number = item.account_number or item.worker.account_20_digit or ''
     else:
         account_number = item.account_number or item.worker.current_account or ''
 
@@ -405,6 +474,8 @@ def _serialize_funeral_request(item):
         'account_number': account_number,
         'account_file_url': item.account_file.url if item.account_file else None,
         'account_file_name': item.account_file.name.split('/')[-1] if item.account_file else None,
+        'recipient_account_file_url': item.recipient_account_file.url if item.recipient_account_file else None,
+        'recipient_account_file_name': item.recipient_account_file.name.split('/')[-1] if item.recipient_account_file else None,
         'status': item.get_status(),
         'status_text': item.get_status_display_text(),
         'request_status': item.request_status,
@@ -524,6 +595,7 @@ def api_reference_data(request):
         'resort_choices': [{'value': v, 'label': l} for v, l in VacationRequest.RESORT_CHOICES],
         'assistance_type_choices': [{'value': v, 'label': l} for v, l in MaterialAssistanceRequest.ASSISTANCE_TYPE_CHOICES],
         'account_type_choices': [{'value': v, 'label': l} for v, l in CoalRequest.ACCOUNT_TYPE_CHOICES],
+        'enterprise_subdivision_choices': [{'value': v, 'label': l} for v, l in Worker.ENTERPRISE_SUBDIVISION_CHOICES],
     })
 
 
@@ -638,6 +710,9 @@ def api_workers(request):
 
     with transaction.atomic():
         worker = worker_form.save(commit=False)
+        worker.phone = _normalize_phone_with_default(worker.phone)
+        worker.account_20_digit = _normalize_kz_account(worker.account_20_digit) or 'KZ'
+        worker.current_account = _normalize_kz_account(worker.current_account) or 'KZ'
         if user_is_admin:
             user_id = data.get('user_id')
             if user_id:
@@ -706,6 +781,9 @@ def api_worker_detail(request, worker_id):
 
     with transaction.atomic():
         worker = worker_form.save(commit=False)
+        worker.phone = _normalize_phone_with_default(worker.phone)
+        worker.account_20_digit = _normalize_kz_account(worker.account_20_digit) or 'KZ'
+        worker.current_account = _normalize_kz_account(worker.current_account) or 'KZ'
         if user_is_admin and data.get('user_id'):
             try:
                 worker.user = User.objects.get(id=int(data.get('user_id')))
@@ -829,7 +907,10 @@ def api_create_vacation_request(request):
                     )
 
     if not is_admin(request.user) and resort in ['zhartas', 'shakhter']:
-        limit, _ = VacationLimit.get_or_create_limit(request.user, resort)
+        enterprise_subdivision = ''
+        if is_energougol_user(request.user):
+            enterprise_subdivision = (worker.enterprise_subdivision or source.get('enterprise_subdivision') or '').strip()
+        limit, _ = VacationLimit.get_or_create_limit(request.user, resort, enterprise_subdivision)
         new_places = (1 if worker_goes else 0) + len(family_member_ids)
         if new_places > limit.get_remaining_places():
             return _api_error(
@@ -899,24 +980,26 @@ def api_create_material_request(request):
 
     assistance_type = (source.get('assistance_type') or '').strip()
     amount_raw = source.get('amount') or '0'
+    allowed_account_types = dict(MaterialAssistanceRequest.ACCOUNT_TYPE_CHOICES)
     account_type = source.get('account_type')
-    account_number = (source.get('account_number') or '').strip()
+    account_number_raw = source.get('account_number')
     account_file = request.FILES.get('account_file')
 
     if not assistance_type:
         return _api_error('Не выбран вид помощи')
-    if account_type not in dict(MaterialAssistanceRequest.ACCOUNT_TYPE_CHOICES):
-        return _api_error('Некорректный тип счета')
-    if not account_number:
-        return _api_error('Не указан номер счета')
-    if not account_number.startswith('KZ'):
-        return _api_error('Номер счета должен начинаться с KZ')
-    if len(account_number) != 20:
-        return _api_error('Номер счета должен содержать KZ и 18 цифр')
-    if not account_number[2:].isdigit():
-        return _api_error('После KZ должны быть только цифры')
+    account_type, account_number = _resolve_account_type_and_number(
+        worker,
+        account_type,
+        account_number_raw,
+        allowed_account_types,
+    )
 
     if worker.is_pensioner_like():
+        account_error = _validate_kz_account_or_error(account_number)
+        if account_error:
+            return _api_error(
+                f'{account_error}. Заполните счет в карточке работника или укажите его в заявлении.'
+            )
         if MaterialAssistanceRequest.objects.filter(worker=worker, assistance_type=assistance_type).exists():
             return _api_error('Повторное оформление запрещено: заявление на этот вид помощи уже существует')
         if assistance_type == 'treatment' and CoalRequest.objects.filter(worker=worker).exists():
@@ -929,6 +1012,11 @@ def api_create_material_request(request):
             return _api_error('Некорректная сумма')
         if amount_decimal <= 0:
             return _api_error('Сумма должна быть больше 0')
+        # Для работников поля счета в форме скрыты, но в заявлении храним счет из карточки, если он есть.
+        if account_number:
+            account_error = _validate_kz_account_or_error(account_number)
+            if account_error:
+                return _api_error(account_error)
 
     with transaction.atomic():
         item = MaterialAssistanceRequest.objects.create(
@@ -995,21 +1083,20 @@ def api_create_coal_request(request):
     ).exists():
         return _api_error('Нельзя оформить уголь: для пенсионера уже есть заявление на материальную помощь (лекарства)')
 
-    account_type = source.get('account_type')
-    account_number = (source.get('account_number') or '').strip()
+    allowed_account_types = dict(CoalRequest.ACCOUNT_TYPE_CHOICES)
+    account_type, account_number = _resolve_account_type_and_number(
+        worker,
+        source.get('account_type'),
+        source.get('account_number'),
+        allowed_account_types,
+    )
     account_file = request.FILES.get('account_file')
 
-    if account_type not in dict(CoalRequest.ACCOUNT_TYPE_CHOICES):
+    if account_type not in allowed_account_types:
         return _api_error('Некорректный тип счета')
-
-    if not account_number:
-        return _api_error('Не указан номер счета')
-    if not account_number.startswith('KZ'):
-        return _api_error('Номер счета должен начинаться с KZ')
-    if len(account_number) != 20:
-        return _api_error('Номер счета должен содержать KZ и 18 цифр')
-    if not account_number[2:].isdigit():
-        return _api_error('После KZ должны быть только цифры')
+    account_error = _validate_kz_account_or_error(account_number)
+    if account_error:
+        return _api_error(f'{account_error}. Заполните счет в карточке пенсионера или укажите его в заявлении.')
 
     with transaction.atomic():
         if request.FILES.get('passport_file'):
@@ -1072,25 +1159,26 @@ def api_create_funeral_request(request):
 
     applicant_full_name = (source.get('applicant_full_name') or '').strip()
     applicant_inn = ''.join(c for c in (source.get('applicant_inn') or '') if c.isdigit())
-    account_type = source.get('account_type')
-    account_number = (source.get('account_number') or '').strip()
+    allowed_account_types = dict(FuneralRequest.ACCOUNT_TYPE_CHOICES)
+    account_type, account_number = _resolve_account_type_and_number(
+        worker,
+        source.get('account_type'),
+        source.get('account_number'),
+        allowed_account_types,
+    )
     account_file = request.FILES.get('account_file')
+    recipient_account_file = request.FILES.get('recipient_account_file')
     death_date_raw = (source.get('death_date') or '').strip()
 
     if not applicant_full_name:
         return _api_error('Не указано ФИО заявителя')
     if len(applicant_inn) != 12:
         return _api_error('ИИН должен содержать 12 цифр')
-    if account_type not in dict(FuneralRequest.ACCOUNT_TYPE_CHOICES):
+    if account_type not in allowed_account_types:
         return _api_error('Некорректный тип счета')
-    if not account_number:
-        return _api_error('Не указан номер счета')
-    if not account_number.startswith('KZ'):
-        return _api_error('Номер счета должен начинаться с KZ')
-    if len(account_number) != 20:
-        return _api_error('Номер счета должен содержать KZ и 18 цифр')
-    if not account_number[2:].isdigit():
-        return _api_error('После KZ должны быть только цифры')
+    account_error = _validate_kz_account_or_error(account_number)
+    if account_error:
+        return _api_error(f'{account_error}. Заполните счет в карточке пенсионера или укажите его в заявлении.')
 
     death_date = None
     if death_date_raw:
@@ -1121,6 +1209,7 @@ def api_create_funeral_request(request):
             account_type=account_type,
             account_number=account_number,
             account_file=account_file,
+            recipient_account_file=recipient_account_file,
         )
 
         if request.FILES.get('applicant_id_file'):
@@ -1138,13 +1227,22 @@ def api_create_funeral_request(request):
 @api_login_required
 @require_http_methods(['GET', 'POST'])
 def api_vacation_limits(request):
+    energougol_mode = is_energougol_user(request.user)
+    subdivision_choices = [{'value': v, 'label': l} for v, l in Worker.ENTERPRISE_SUBDIVISION_CHOICES] if energougol_mode else []
+    subdivision_values = {item['value'] for item in subdivision_choices}
+
     if request.method == 'GET':
         if is_admin(request.user):
             return JsonResponse({'success': True, 'limits': []})
 
+        subdivision = ''
+        if energougol_mode:
+            requested_subdivision = (request.GET.get('enterprise_subdivision') or '').strip()
+            subdivision = requested_subdivision if requested_subdivision in subdivision_values else Worker.ENTERPRISE_SUBDIVISION_ENERGOUGOL
+
         result = []
         for resort in ('zhartas', 'shakhter'):
-            limit, _ = VacationLimit.get_or_create_limit(request.user, resort)
+            limit, _ = VacationLimit.get_or_create_limit(request.user, resort, subdivision)
             result.append({
                 'resort': resort,
                 'resort_display': dict(VacationLimit.RESORT_CHOICES).get(resort, resort),
@@ -1153,8 +1251,14 @@ def api_vacation_limits(request):
                 'remaining': limit.get_remaining_places(),
                 'period_start': _date_iso(limit.period_start),
                 'period_start_human': _date_human(limit.period_start),
+                'enterprise_subdivision': subdivision,
             })
-        return JsonResponse({'success': True, 'limits': result})
+        return JsonResponse({
+            'success': True,
+            'limits': result,
+            'enterprise_subdivision': subdivision,
+            'enterprise_subdivision_choices': subdivision_choices,
+        })
 
     if is_admin(request.user):
         return _api_error('Для администратора лимиты не используются', status=403)
@@ -1166,6 +1270,11 @@ def api_vacation_limits(request):
     if resort not in ('zhartas', 'shakhter'):
         return _api_error('Некорректный курорт')
 
+    subdivision = ''
+    if energougol_mode:
+        requested_subdivision = (source.get('enterprise_subdivision') or '').strip()
+        subdivision = requested_subdivision if requested_subdivision in subdivision_values else Worker.ENTERPRISE_SUBDIVISION_ENERGOUGOL
+
     try:
         new_limit = int(source.get('limit'))
     except (TypeError, ValueError):
@@ -1174,7 +1283,7 @@ def api_vacation_limits(request):
     if new_limit < 0:
         return _api_error('Лимит не может быть отрицательным')
 
-    limit, created = VacationLimit.get_or_create_limit(request.user, resort)
+    limit, created = VacationLimit.get_or_create_limit(request.user, resort, subdivision)
     old_limit = limit.limit
     if not created and old_limit > 0 and new_limit < old_limit:
         return _api_error(f'Можно только увеличить лимит. Текущий: {limit.limit}')
@@ -1196,7 +1305,9 @@ def api_vacation_limits(request):
             'remaining': limit.get_remaining_places(),
             'period_start': _date_iso(limit.period_start),
             'period_start_human': _date_human(limit.period_start),
+            'enterprise_subdivision': subdivision,
         },
+        'enterprise_subdivision_choices': subdivision_choices,
     })
 
 
@@ -1237,6 +1348,61 @@ def api_reports(request):
     items.sort(key=lambda x: x.get('created_at_iso') or '', reverse=True)
 
     return JsonResponse({'success': True, 'results': items})
+
+
+@api_login_required
+@require_http_methods(['GET'])
+def api_appeals(request):
+    """Сводка обращений (всех заявлений) по работнику за выбранный год."""
+    search = (request.GET.get('search') or '').strip().lower()
+    year_raw = (request.GET.get('year') or '').strip()
+    try:
+        year = int(year_raw) if year_raw else timezone.now().year
+    except (TypeError, ValueError):
+        year = timezone.now().year
+
+    workers_qs = _workers_qs(request.user)
+    if search:
+        matched_ids = []
+        for worker in workers_qs:
+            if (
+                search in (worker.full_name or '').lower()
+                or search in (worker.personnel_number or '').lower()
+                or search in (worker.inn or '').lower()
+            ):
+                matched_ids.append(worker.id)
+        workers_qs = _workers_qs(request.user).filter(id__in=matched_ids)
+    else:
+        workers_qs = workers_qs.none()
+
+    results = []
+    for worker in workers_qs[:30]:
+        reports = _serialize_worker_reports(worker)
+        year_reports = []
+        for item in reports:
+            created_iso = item.get('created_at_iso') or ''
+            if str(created_iso).startswith(f'{year}-'):
+                year_reports.append(item)
+        year_reports.sort(key=lambda x: x.get('created_at_iso') or '', reverse=True)
+        results.append({
+            'worker': {
+                'id': worker.id,
+                'full_name': worker.full_name,
+                'personnel_number': worker.personnel_number or '',
+                'status': worker.status,
+                'status_display': worker.get_status_display(),
+                'department': worker.department or '',
+                'user_account': worker.user.username if worker.user else '',
+            },
+            'appeals': year_reports,
+            'appeals_count': len(year_reports),
+        })
+
+    return JsonResponse({
+        'success': True,
+        'year': year,
+        'results': results,
+    })
 
 
 @api_login_required

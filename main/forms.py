@@ -74,6 +74,10 @@ class WorkerForm(forms.ModelForm):
         if 'personnel_number' in self.fields:
             self.fields['personnel_number'].required = False
             self.fields['personnel_number'].help_text = 'Можно оставить пустым (если табельного номера нет).'
+        if not self.instance.pk:
+            self.fields['phone'].initial = '+7'
+            self.fields['account_20_digit'].initial = 'KZ'
+            self.fields['current_account'].initial = 'KZ'
 
     def clean_personnel_number(self):
         personnel_number = self.cleaned_data.get('personnel_number')
@@ -91,6 +95,7 @@ class WorkerForm(forms.ModelForm):
             'has_benefits', 'benefits_file', 'benefits_name',
             'has_miner_glory', 'miner_glory_file',
             'house_passport_file', 'pensioner_id_file', 'account_20_digit', 'current_account',
+            'enterprise_subdivision', 'regress_100_active', 'regress_29_active', 'regress_15_active',
             'is_dead', 'death_date', 'death_certificate_file'
         ]
         widgets = {
@@ -150,6 +155,9 @@ class WorkerForm(forms.ModelForm):
             'death_date': forms.DateInput(attrs={
                 'class': 'form-input',
                 'type': 'date',
+            }),
+            'enterprise_subdivision': forms.Select(attrs={
+                'class': 'form-input',
             }),
         }
 
@@ -236,6 +244,7 @@ class FuneralRequestForm(forms.ModelForm):
     # Добавляем поля для файлов, которые не в модели, но нужны для загрузки
     applicant_id_file = forms.FileField(required=True, widget=forms.FileInput(attrs={'class': 'form-input'}))
     death_certificate_file = forms.FileField(required=True, widget=forms.FileInput(attrs={'class': 'form-input'}))
+    recipient_account_file = forms.FileField(required=False, widget=forms.FileInput(attrs={'class': 'form-input'}))
     
     class Meta:
         model = FuneralRequest

@@ -10,19 +10,28 @@ class FamilyMemberInline(admin.TabularInline):
 
 @admin.register(Worker)
 class WorkerAdmin(admin.ModelAdmin):
-    list_display = ['full_name', 'personnel_number', 'inn', 'status', 'department', 'position', 'is_union_member', 'user']
-    list_filter = ['status', 'is_union_member', 'is_contract_member', 'department', 'user']
+    list_display = [
+        'full_name', 'personnel_number', 'inn', 'status', 'department',
+        'enterprise_subdivision', 'position', 'is_union_member', 'user'
+    ]
+    list_filter = ['status', 'is_union_member', 'is_contract_member', 'department', 'enterprise_subdivision', 'user']
     search_fields = ['full_name', 'personnel_number', 'inn', 'department', 'position', 'phone']
     inlines = [FamilyMemberInline]
     fieldsets = (
         ('Основная информация', {
-            'fields': ('user', 'full_name', 'personnel_number', 'inn', 'status', 'is_union_member', 'department', 'position', 'is_contract_member')
+            'fields': (
+                'user', 'full_name', 'personnel_number', 'inn', 'status', 'is_union_member',
+                'department', 'enterprise_subdivision', 'position', 'is_contract_member'
+            )
         }),
         ('Контактная информация', {
             'fields': ('phone', 'address')
         }),
         ('Удостоверение личности', {
             'fields': ('id_number', 'id_issue_date', 'id_issued_by')
+        }),
+        ('Пункт 13 (регресс)', {
+            'fields': ('regress_100_active', 'regress_29_active', 'regress_15_active')
         }),
     )
     
@@ -57,8 +66,8 @@ class VacationRequestAdmin(admin.ModelAdmin):
 
 @admin.register(VacationLimit)
 class VacationLimitAdmin(admin.ModelAdmin):
-    list_display = ['user', 'resort', 'period_start', 'limit', 'is_initial', 'created_at']
-    list_filter = ['resort', 'period_start', 'is_initial', 'user']
+    list_display = ['user', 'resort', 'enterprise_subdivision', 'period_start', 'limit', 'is_initial', 'created_at']
+    list_filter = ['resort', 'enterprise_subdivision', 'period_start', 'is_initial', 'user']
     search_fields = ['user__username']
     readonly_fields = ['created_at', 'updated_at']
 
