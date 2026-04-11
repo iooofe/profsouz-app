@@ -171,6 +171,17 @@ def _workers_qs(user):
     return Worker.objects.filter(user=user).select_related('user').order_by('full_name')
 
 
+def _worker_file_payload(worker, attr_name, route_key):
+    file_field = getattr(worker, attr_name, None)
+    if not file_field:
+        return {'url': None, 'download_url': None, 'name': None}
+    return {
+        'url': file_field.url if getattr(file_field, 'url', None) else None,
+        'download_url': reverse('main:download_worker_file', args=[worker.id, route_key]),
+        'name': file_field.name.split('/')[-1] if file_field.name else None,
+    }
+
+
 def _serialize_family_member(member):
     return {
         'id': member.id,
@@ -220,16 +231,11 @@ def _serialize_worker(worker, include_family=False):
         'user_id': worker.user.id if worker.user else None,
         'user_account': worker.user.username if worker.user else None,
         'files': {
-            'benefits_file_url': worker.benefits_file.url if worker.benefits_file else None,
-            'benefits_file_name': worker.benefits_file.name.split('/')[-1] if worker.benefits_file else None,
-            'miner_glory_file_url': worker.miner_glory_file.url if worker.miner_glory_file else None,
-            'miner_glory_file_name': worker.miner_glory_file.name.split('/')[-1] if worker.miner_glory_file else None,
-            'house_passport_file_url': worker.house_passport_file.url if worker.house_passport_file else None,
-            'house_passport_file_name': worker.house_passport_file.name.split('/')[-1] if worker.house_passport_file else None,
-            'pensioner_id_file_url': worker.pensioner_id_file.url if worker.pensioner_id_file else None,
-            'pensioner_id_file_name': worker.pensioner_id_file.name.split('/')[-1] if worker.pensioner_id_file else None,
-            'death_certificate_file_url': worker.death_certificate_file.url if worker.death_certificate_file else None,
-            'death_certificate_file_name': worker.death_certificate_file.name.split('/')[-1] if worker.death_certificate_file else None,
+            'benefits_file': _worker_file_payload(worker, 'benefits_file', 'benefits'),
+            'miner_glory_file': _worker_file_payload(worker, 'miner_glory_file', 'miner_glory'),
+            'house_passport_file': _worker_file_payload(worker, 'house_passport_file', 'house_passport'),
+            'pensioner_id_file': _worker_file_payload(worker, 'pensioner_id_file', 'pensioner_id'),
+            'death_certificate_file': _worker_file_payload(worker, 'death_certificate_file', 'death_certificate'),
         },
         'family_members_count': worker.family_members.count(),
     }
@@ -1067,16 +1073,14 @@ def api_create_coal_request(request):
 
     worker_id = source.get('worker_id')
     if not worker_id:
-        return _api_error('Не выбран пенсионер')
+        return _api_error('Не выбран работник')
 
     worker = _worker_scope_for_user(request.user, worker_id)
-    if not worker.is_pensioner_like():
-        return _api_error('Заявление на уголь доступно только для пенсионеров')
 
     if CoalRequest.objects.filter(worker=worker).exists():
-        return _api_error('Повторное оформление запрещено: для пенсионера уже есть заявление на уголь')
+        return _api_error('Повторное оформление запрещено: для этого работника уже есть заявление на уголь')
 
-    if MaterialAssistanceRequest.objects.filter(
+    if worker.is_pensioner_like() and MaterialAssistanceRequest.objects.filter(
         worker=worker,
         worker__status__in=Worker.PENSIONER_STATUS_CODES,
         assistance_type='treatment',
@@ -1096,7 +1100,7 @@ def api_create_coal_request(request):
         return _api_error('Некорректный тип счета')
     account_error = _validate_kz_account_or_error(account_number)
     if account_error:
-        return _api_error(f'{account_error}. Заполните счет в карточке пенсионера или укажите его в заявлении.')
+        return _api_error(f'{account_error}. Заполните счет в карточке работника или укажите его в заявлении.')
 
     with transaction.atomic():
         if request.FILES.get('passport_file'):

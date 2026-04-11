@@ -30,6 +30,14 @@ const TABS = [
   { id: 'dashboard', label: 'Сводка', icon: BarChart3 },
 ];
 
+const WORKER_FILE_FIELDS = [
+  ['benefits_file', 'Файл льгот'],
+  ['miner_glory_file', 'Файл славы'],
+  ['house_passport_file', 'Паспорт дома'],
+  ['pensioner_id_file', 'Удостоверение'],
+  ['death_certificate_file', 'Справка о смерти'],
+];
+
 const EMPTY_WORKER_FORM = {
   full_name: '',
   personnel_number: '',
@@ -57,6 +65,7 @@ const EMPTY_WORKER_FORM = {
   death_date: '',
   user_id: '',
   family_members: [],
+  existing_files: {},
   files: {
     benefits_file: null,
     miner_glory_file: null,
@@ -594,6 +603,7 @@ function WorkersTab({ user, references, onRefreshReference }) {
         death_date: worker.death_date || '',
         user_id: worker.user_id ? String(worker.user_id) : '',
         family_members: worker.family_members || [],
+        existing_files: worker.files || {},
         files: {
           benefits_file: null,
           miner_glory_file: null,
@@ -685,6 +695,23 @@ function WorkersTab({ user, references, onRefreshReference }) {
     material: 'Матпомощь',
     coal: 'Уголь',
     funeral: 'Погребение',
+  };
+
+  const renderWorkerFileMeta = (fileKey) => {
+    const selectedFile = formState.files?.[fileKey];
+    if (selectedFile instanceof File) {
+      return <div className="field-hint">Выбран новый файл: {selectedFile.name}</div>;
+    }
+    const fileInfo = formState.existing_files?.[fileKey];
+    if (!fileInfo?.name || !fileInfo?.download_url) return null;
+    return (
+      <div className="field-hint">
+        Текущий файл:{' '}
+        <a href={fileInfo.download_url} target="_blank" rel="noreferrer">
+          {fileInfo.name}
+        </a>
+      </div>
+    );
   };
 
   return (
@@ -1055,66 +1082,21 @@ function WorkersTab({ user, references, onRefreshReference }) {
                 </label>
               )}
 
-              <label>
-                Файл льгот
-                <input
-                  type="file"
-                  onChange={(e) =>
-                    setFormState((prev) => ({
-                      ...prev,
-                      files: { ...prev.files, benefits_file: e.target.files?.[0] || null },
-                    }))
-                  }
-                />
-              </label>
-              <label>
-                Файл славы
-                <input
-                  type="file"
-                  onChange={(e) =>
-                    setFormState((prev) => ({
-                      ...prev,
-                      files: { ...prev.files, miner_glory_file: e.target.files?.[0] || null },
-                    }))
-                  }
-                />
-              </label>
-              <label>
-                Паспорт дома
-                <input
-                  type="file"
-                  onChange={(e) =>
-                    setFormState((prev) => ({
-                      ...prev,
-                      files: { ...prev.files, house_passport_file: e.target.files?.[0] || null },
-                    }))
-                  }
-                />
-              </label>
-              <label>
-                Удостоверение пенсионера
-                <input
-                  type="file"
-                  onChange={(e) =>
-                    setFormState((prev) => ({
-                      ...prev,
-                      files: { ...prev.files, pensioner_id_file: e.target.files?.[0] || null },
-                    }))
-                  }
-                />
-              </label>
-              <label>
-                Справка о смерти
-                <input
-                  type="file"
-                  onChange={(e) =>
-                    setFormState((prev) => ({
-                      ...prev,
-                      files: { ...prev.files, death_certificate_file: e.target.files?.[0] || null },
-                    }))
-                  }
-                />
-              </label>
+              {WORKER_FILE_FIELDS.map(([fileKey, label]) => (
+                <label key={fileKey}>
+                  {label}
+                  <input
+                    type="file"
+                    onChange={(e) =>
+                      setFormState((prev) => ({
+                        ...prev,
+                        files: { ...prev.files, [fileKey]: e.target.files?.[0] || null },
+                      }))
+                    }
+                  />
+                  {renderWorkerFileMeta(fileKey)}
+                </label>
+              ))}
 
               <div className="family-block">
                 <div className="family-head">
@@ -1292,7 +1274,7 @@ function WorkerLookup({ label, pensionerOnly = false, onSelect, selectedWorker }
               {selectedWorker.personnel_number || '—'} · {selectedWorker.department || '—'}
             </p>
           </div>
-          <button className="btn btn-secondary" onClick={() => onSelect(null)}>
+          <button type="button" className="btn btn-secondary" onClick={() => onSelect(null)}>
             Сброс
           </button>
         </div>
@@ -1311,6 +1293,7 @@ function WorkerLookup({ label, pensionerOnly = false, onSelect, selectedWorker }
             <div className="lookup-list">
               {results.map((worker) => (
                 <button
+                  type="button"
                   key={worker.id}
                   className="lookup-item"
                   onClick={() => {
@@ -1551,7 +1534,7 @@ function ApplicationsTab({ user }) {
   const submitCoal = async (event) => {
     event.preventDefault();
     if (!coalWorker) {
-      showResult('Выберите пенсионера для заявления на уголь', true);
+      showResult('Выберите работника для заявления на уголь', true);
       return;
     }
 
@@ -1966,12 +1949,7 @@ function ApplicationsTab({ user }) {
 
         <form className="card form-card" onSubmit={submitCoal}>
           <h3>Заявление на уголь</h3>
-          <WorkerLookup
-            label="Пенсионер"
-            pensionerOnly
-            onSelect={setCoalWorker}
-            selectedWorker={coalWorker}
-          />
+          <WorkerLookup label="Работник" onSelect={setCoalWorker} selectedWorker={coalWorker} />
 
           <label>
             Тип счета
@@ -2017,7 +1995,7 @@ function ApplicationsTab({ user }) {
           </label>
 
           <label>
-            Удостоверение пенсионера
+            Удостоверение
             <input
               type="file"
               onChange={(e) =>
@@ -2304,7 +2282,12 @@ function ReportsTab({ user, references }) {
     if (!window.confirm('Удалить заявление?')) return;
 
     try {
-      await apiFetch(endpoint, { method: 'POST' });
+      try {
+        await apiFetch(endpoint, { method: 'DELETE' });
+      } catch (deleteError) {
+        if (deleteError?.status !== 405) throw deleteError;
+        await apiFetch(endpoint, { method: 'POST' });
+      }
       await load();
       if (detailData && detailData._id === row.id && detailData._type === row.type) {
         setDetailData(null);
@@ -2778,7 +2761,7 @@ function ReportsTab({ user, references }) {
                           href: detailData.coal_details.passport_file_url || undefined,
                         },
                         {
-                          label: 'Удостоверение пенсионера',
+                          label: 'Удостоверение',
                           value: detailData.coal_details.pensioner_id_file_name || 'Файл отсутствует',
                           href: detailData.coal_details.pensioner_id_file_url || undefined,
                         },
@@ -3465,6 +3448,8 @@ function ListsTab({ user, references }) {
 
   const [active, setActive] = useState('coal');
   const [period, setPeriod] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [enterpriseFilter, setEnterpriseFilter] = useState('all');
   const [workerCategory, setWorkerCategory] = useState('all');
   const [accountTypeFilter, setAccountTypeFilter] = useState('all');
@@ -3475,14 +3460,22 @@ function ListsTab({ user, references }) {
   const [sortField, setSortField] = useState('number');
   const [sortDirection, setSortDirection] = useState('asc');
 
-  const load = async (targetList = active, targetPeriod = period) => {
+  const load = async ({
+    targetList = active,
+    targetPeriod = period,
+    targetDateFrom = dateFrom,
+    targetDateTo = dateTo,
+  } = {}) => {
     setLoading(true);
     setError('');
 
     try {
       const conf = listConfigs[targetList];
       const params = new URLSearchParams();
-      if (targetPeriod) {
+      if (targetDateFrom && targetDateTo) {
+        params.set('start_date', targetDateFrom);
+        params.set('end_date', targetDateTo);
+      } else if (targetPeriod) {
         params.set('period_start', targetPeriod);
       }
       if (user.is_admin && enterpriseFilter !== 'all') {
@@ -3497,7 +3490,7 @@ function ListsTab({ user, references }) {
       const query = params.toString() ? `?${params.toString()}` : '';
       const response = await apiFetch(`${conf.endpoint}${query}`);
       setData(response);
-      if (!targetPeriod && response.all_periods?.length > 0) {
+      if (!targetPeriod && !targetDateFrom && !targetDateTo && response.all_periods?.length > 0) {
         setPeriod(response.all_periods[0]);
       }
     } catch (e) {
@@ -3508,12 +3501,12 @@ function ListsTab({ user, references }) {
   };
 
   useEffect(() => {
-    load(active, '');
+    load({ targetList: active });
   }, [active, enterpriseFilter, workerCategory, accountTypeFilter]);
 
   useEffect(() => {
-    if (period) {
-      load(active, period);
+    if (period && !dateFrom && !dateTo) {
+      load({ targetList: active, targetPeriod: period });
     }
   }, [period]);
 
@@ -3536,7 +3529,7 @@ function ListsTab({ user, references }) {
 
       if (active === 'bonus') {
         const fd = new FormData();
-        fd.append('period_start', period);
+        fd.append('period_start', dateFrom || period);
         fd.append(field, value);
         await apiFetch(`/api/bonus-payment/${row.worker_id}/update-payment/`, {
           method: 'POST',
@@ -3562,7 +3555,7 @@ function ListsTab({ user, references }) {
         });
       }
 
-      await load(active, period);
+      await load();
     } catch (e) {
       setError(getErrorText(e));
     }
@@ -3582,7 +3575,7 @@ function ListsTab({ user, references }) {
           body: { is_issued: !!nextValue },
         });
       }
-      await load(active, period);
+      await load();
     } catch (e) {
       setError(getErrorText(e));
     }
@@ -3769,7 +3762,10 @@ function ListsTab({ user, references }) {
 
   const buildExcelUrl = (baseUrl) => {
     const params = new URLSearchParams();
-    if (period) {
+    if (dateFrom && dateTo) {
+      params.set('start_date', dateFrom);
+      params.set('end_date', dateTo);
+    } else if (period) {
       params.set('period_start', period);
     }
     if (user.is_admin && enterpriseFilter !== 'all') {
@@ -3797,6 +3793,8 @@ function ListsTab({ user, references }) {
               onClick={() => {
                 setActive(key);
                 setPeriod('');
+                setDateFrom('');
+                setDateTo('');
                 setListSearch('');
                 setSortField('number');
                 setSortDirection('asc');
@@ -3837,7 +3835,40 @@ function ListsTab({ user, references }) {
               placeholder="Поиск по текущему списку"
             />
           </label>
-          <select value={period} onChange={(e) => setPeriod(e.target.value)}>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            title="Дата начала"
+          />
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            title="Дата окончания"
+          />
+          <button
+            className="btn btn-secondary"
+            type="button"
+            onClick={() => {
+              if (!dateFrom || !dateTo) {
+                setError('Для произвольного периода укажите обе даты');
+                return;
+              }
+              setPeriod('');
+              load({ targetList: active, targetPeriod: '', targetDateFrom: dateFrom, targetDateTo: dateTo });
+            }}
+          >
+            Применить даты
+          </button>
+          <select
+            value={period}
+            onChange={(e) => {
+              setDateFrom('');
+              setDateTo('');
+              setPeriod(e.target.value);
+            }}
+          >
             {(data?.all_periods || []).map((p) => (
               <option key={p} value={p}>
                 {p}

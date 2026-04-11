@@ -131,6 +131,38 @@ def get_statement_period():
     return period_start, get_period_end_for_start(period_start)
 
 
+def get_requested_period(request, default_period_resolver=None):
+    """Возвращает период по query-параметрам.
+
+    Поддерживает два режима:
+    - `start_date` + `end_date` для произвольного диапазона
+    - `period_start` для месячного периода с 1 по 30 число
+    """
+    default_period_resolver = default_period_resolver or get_statement_period
+
+    start_date_raw = (request.GET.get('start_date') or '').strip()
+    end_date_raw = (request.GET.get('end_date') or '').strip()
+    if start_date_raw and end_date_raw:
+        try:
+            period_start = date.fromisoformat(start_date_raw)
+            period_end = date.fromisoformat(end_date_raw)
+            if period_end < period_start:
+                period_start, period_end = period_end, period_start
+            return period_start, period_end
+        except (ValueError, TypeError):
+            return default_period_resolver()
+
+    selected_period_start = (request.GET.get('period_start') or '').strip()
+    if selected_period_start:
+        try:
+            period_start = date.fromisoformat(selected_period_start)
+            return period_start, get_period_end_for_start(period_start)
+        except (ValueError, TypeError):
+            return default_period_resolver()
+
+    return default_period_resolver()
+
+
 def get_worker_category_filter(request):
     return (request.GET.get('worker_category') or WORKER_CATEGORY_ALL).strip()
 
@@ -2558,20 +2590,15 @@ def create_coal_request(request):
             messages.error(request, 'Работник не найден!')
             return redirect(f"{reverse('main:index')}?tab=applications")
         
-        # Проверяем, что работник - пенсионер
-        if not worker.is_pensioner_like():
-            messages.error(request, 'Заявление на уголь может подать только пенсионер!')
-            return redirect(f"{reverse('main:index')}?tab=applications")
-
         # Запрет дублей и взаимоисключение: уголь ↔ лекарства (матпомощь на лечение)
         if CoalRequest.objects.filter(worker=worker).exists():
             messages.error(
                 request,
-                'Повторное оформление запрещено: для этого пенсионера уже существует заявление на уголь.'
+                'Повторное оформление запрещено: для этого работника уже существует заявление на уголь.'
             )
             return redirect(f"{reverse('main:index')}?tab=applications")
 
-        if MaterialAssistanceRequest.objects.filter(
+        if worker.is_pensioner_like() and MaterialAssistanceRequest.objects.filter(
             worker=worker,
             worker__status__in=Worker.PENSIONER_STATUS_CODES,
             assistance_type='treatment',
@@ -2606,7 +2633,7 @@ def create_coal_request(request):
             account_type = '20_digit' if account_number else account_type
 
         if not account_number:
-            messages.error(request, 'Не указан номер счета! Заполните счет в карточке пенсионера или в заявлении.')
+            messages.error(request, 'Не указан номер счета! Заполните счет в карточке работника или в заявлении.')
             return redirect(f"{reverse('main:index')}?tab=applications")
         if not account_number.startswith('KZ'):
             messages.error(request, 'Номер счета должен начинаться с KZ!')
@@ -2744,26 +2771,6 @@ def coal_request_detail(request, request_id):
         preview_html = '<div class="error">Ошибка при генерации предпросмотра</div>'
     
     # Безопасное получение URL файлов (даже если работник мертв)
-    passport_file_url = None
-    passport_file_name = None
-    if coal_request.worker.house_passport_file:
-        try:
-            passport_file_url = coal_request.worker.house_passport_file.url
-            passport_file_name = coal_request.worker.house_passport_file.name.split('/')[-1]
-        except Exception:
-            passport_file_url = None
-            passport_file_name = None
-    
-    pensioner_id_file_url = None
-    pensioner_id_file_name = None
-    if coal_request.worker.pensioner_id_file:
-        try:
-            pensioner_id_file_url = coal_request.worker.pensioner_id_file.url
-            pensioner_id_file_name = coal_request.worker.pensioner_id_file.name.split('/')[-1]
-        except Exception:
-            pensioner_id_file_url = None
-            pensioner_id_file_name = None
-    
     # Определяем отображаемый счет
     if coal_request.account_type == '20_digit':
         display_account_number = coal_request.account_number or coal_request.worker.account_20_digit or '—'
@@ -2794,10 +2801,10 @@ def coal_request_detail(request, request_id):
             'status': coal_request.get_status(),
             'status_text': coal_request.get_status_display_text(),
             'has_passport_file': bool(coal_request.worker.house_passport_file),
-            'passport_file_url': coal_request.worker.house_passport_file.url if coal_request.worker.house_passport_file else None,
+            'passport_file_url': reverse('main:download_worker_file', args=[coal_request.worker.id, 'house_passport']) if coal_request.worker.house_passport_file else None,
             'passport_file_name': coal_request.worker.house_passport_file.name.split('/')[-1] if coal_request.worker.house_passport_file else None,
             'has_pensioner_id_file': bool(coal_request.worker.pensioner_id_file),
-            'pensioner_id_file_url': coal_request.worker.pensioner_id_file.url if coal_request.worker.pensioner_id_file else None,
+            'pensioner_id_file_url': reverse('main:download_worker_file', args=[coal_request.worker.id, 'pensioner_id']) if coal_request.worker.pensioner_id_file else None,
             'pensioner_id_file_name': coal_request.worker.pensioner_id_file.name.split('/')[-1] if coal_request.worker.pensioner_id_file else None,
         },
         'created_at': coal_request.created_at.strftime('%d.%m.%Y %H:%M'),
@@ -3119,7 +3126,7 @@ def funeral_request_detail(request, request_id):
             'applicant_id_file_url': funeral_request.applicant_id_file.url if funeral_request.applicant_id_file else None,
             'applicant_id_file_name': funeral_request.applicant_id_file.name.split('/')[-1] if funeral_request.applicant_id_file else None,
             'has_death_certificate_file': bool(funeral_request.worker.death_certificate_file),
-            'death_certificate_file_url': funeral_request.worker.death_certificate_file.url if funeral_request.worker.death_certificate_file else None,
+            'death_certificate_file_url': reverse('main:download_worker_file', args=[funeral_request.worker.id, 'death_certificate']) if funeral_request.worker.death_certificate_file else None,
             'death_certificate_file_name': funeral_request.worker.death_certificate_file.name.split('/')[-1] if funeral_request.worker.death_certificate_file else None,
         },
         'created_at': funeral_request.created_at.strftime('%d.%m.%Y %H:%M'),
@@ -3195,19 +3202,7 @@ def coal_compensation_list(request):
     worker_category = get_worker_category_filter(request)
     account_type_filter = get_account_type_filter(request)
     
-    # Проверяем, выбран ли конкретный период через GET параметр
-    selected_period_start = request.GET.get('period_start')
-    if selected_period_start:
-        try:
-            period_start = date.fromisoformat(selected_period_start)
-            # Вычисляем period_end для выбранного периода
-            period_end = get_period_end_for_start(period_start)
-        except (ValueError, TypeError):
-            # Если невалидная дата, используем текущий период
-            period_start, period_end = get_coal_compensation_period()
-    else:
-        # Используем текущий период по умолчанию
-        period_start, period_end = get_coal_compensation_period()
+    period_start, period_end = get_requested_period(request, get_coal_compensation_period)
     
     # Получаем все заявления на уголь в выбранном периоде
     if user_is_admin:
@@ -3323,19 +3318,7 @@ def generate_coal_compensation_excel(request):
     worker_category = get_worker_category_filter(request)
     account_type_filter = get_account_type_filter(request)
     
-    # Проверяем, выбран ли конкретный период через GET параметр
-    selected_period_start = request.GET.get('period_start')
-    if selected_period_start:
-        try:
-            period_start = date.fromisoformat(selected_period_start)
-            # Вычисляем period_end для выбранного периода
-            period_end = get_period_end_for_start(period_start)
-        except (ValueError, TypeError):
-            # Если невалидная дата, используем текущий период
-            period_start, period_end = get_coal_compensation_period()
-    else:
-        # Используем текущий период по умолчанию
-        period_start, period_end = get_coal_compensation_period()
+    period_start, period_end = get_requested_period(request, get_coal_compensation_period)
     
     # Получаем все заявления на уголь в выбранном периоде
     if user_is_admin:
@@ -3560,58 +3543,44 @@ def bonus_payment_list(request):
     worker_category = get_worker_category_filter(request)
     account_type_filter = get_account_type_filter(request)
     
-    # Проверяем, выбран ли конкретный период через GET параметр
-    selected_period_start = request.GET.get('period_start')
-    if selected_period_start:
-        try:
-            period_start = date.fromisoformat(selected_period_start)
-            # Вычисляем period_end для выбранного периода
-            period_end = get_period_end_for_start(period_start)
-        except (ValueError, TypeError):
-            # Если невалидная дата, используем текущий период
-            period_start, period_end = get_coal_compensation_period()
-    else:
-        # Используем текущий период по умолчанию
-        period_start, period_end = get_coal_compensation_period()
+    period_start, period_end = get_requested_period(request, get_coal_compensation_period)
     
     # Определяем, является ли выбранный период текущим
     today = timezone.now().date()
     is_current_period = (today >= period_start and today <= period_end)
     
-    # Получаем всех пенсионеров с шахтерской/трудовой славой
-    # Для текущего периода - показываем всех (включая умерших)
-    # Для будущих периодов - исключаем умерших и тех, у кого награды появились в текущем периоде
+    # Получаем всех живых пенсионеров с шахтерской/трудовой славой.
     if user_is_admin:
         base_query = Worker.objects.filter(
-            status='pensioner',
-            has_miner_glory=True
+            status__in=Worker.PENSIONER_STATUS_CODES,
+            has_miner_glory=True,
+            is_dead=False,
         ).select_related('user')
         if selected_user_id:
             base_query = base_query.filter(user_id=selected_user_id)
         
         if not is_current_period:
-            # Для будущих периодов исключаем умерших
-            base_query = base_query.filter(is_dead=False)
-            # Исключаем тех, у кого награды появились в текущем периоде
-            # (если у них нет bonus_period_start, значит они еще не были в списке)
-            current_period_start, current_period_end = get_coal_compensation_period()
-            # Показываем только тех, у кого уже были данные в предыдущих периодах
-            base_query = base_query.filter(bonus_period_start__isnull=False)
+            base_query = base_query.filter(
+                bonus_period_start__isnull=False,
+                bonus_period_start__gte=period_start,
+                bonus_period_start__lte=period_end,
+            )
         
         workers = apply_worker_category_filter(base_query, worker_category, status_field='status').order_by('full_name')
     else:
         base_query = Worker.objects.filter(
             user=request.user,
-            status='pensioner',
-            has_miner_glory=True
+            status__in=Worker.PENSIONER_STATUS_CODES,
+            has_miner_glory=True,
+            is_dead=False,
         )
         
         if not is_current_period:
-            # Для будущих периодов исключаем умерших
-            base_query = base_query.filter(is_dead=False)
-            # Исключаем тех, у кого награды появились в текущем периоде
-            current_period_start, current_period_end = get_coal_compensation_period()
-            base_query = base_query.filter(bonus_period_start__isnull=False)
+            base_query = base_query.filter(
+                bonus_period_start__isnull=False,
+                bonus_period_start__gte=period_start,
+                bonus_period_start__lte=period_end,
+            )
         
         workers = apply_worker_category_filter(base_query, worker_category, status_field='status').order_by('full_name')
     
@@ -3662,11 +3631,11 @@ def bonus_payment_list(request):
         if not bool(worker.is_dead) and bool(worker.has_benefits) and worker.benefits_name:
             benefits = worker.benefits_name
         
-        # Проверяем, есть ли данные для текущего периода
+        # Показываем начисления только если сохраненный период попадает в выбранный диапазон.
         bonus_accrued = None
         bonus_ipn = None
         bonus_to_pay = None
-        if worker.bonus_period_start == period_start:
+        if worker.bonus_period_start and period_start <= worker.bonus_period_start <= period_end:
             bonus_accrued = worker.bonus_accrued
             bonus_ipn = worker.bonus_ipn
             bonus_to_pay = worker.bonus_to_pay
@@ -3734,56 +3703,44 @@ def generate_bonus_payment_excel(request):
     worker_category = get_worker_category_filter(request)
     account_type_filter = get_account_type_filter(request)
     
-    # Проверяем, выбран ли конкретный период через GET параметр
-    selected_period_start = request.GET.get('period_start')
-    if selected_period_start:
-        try:
-            period_start = date.fromisoformat(selected_period_start)
-            # Вычисляем period_end для выбранного периода
-            period_end = get_period_end_for_start(period_start)
-        except (ValueError, TypeError):
-            # Если невалидная дата, используем текущий период
-            period_start, period_end = get_coal_compensation_period()
-    else:
-        # Используем текущий период по умолчанию
-        period_start, period_end = get_coal_compensation_period()
+    period_start, period_end = get_requested_period(request, get_coal_compensation_period)
     
     # Определяем, является ли выбранный период текущим
     today = timezone.now().date()
     is_current_period = (today >= period_start and today <= period_end)
     
-    # Получаем всех пенсионеров с шахтерской/трудовой славой
-    # Для текущего периода - показываем всех (включая умерших)
-    # Для будущих периодов - исключаем умерших и тех, у кого награды появились в текущем периоде
+    # Получаем всех живых пенсионеров с шахтерской/трудовой славой.
     if user_is_admin:
         base_query = Worker.objects.filter(
-            status='pensioner',
-            has_miner_glory=True
+            status__in=Worker.PENSIONER_STATUS_CODES,
+            has_miner_glory=True,
+            is_dead=False,
         ).select_related('user')
         if selected_user_id:
             base_query = base_query.filter(user_id=selected_user_id)
         
         if not is_current_period:
-            # Для будущих периодов исключаем умерших
-            base_query = base_query.filter(is_dead=False)
-            # Исключаем тех, у кого награды появились в текущем периоде
-            current_period_start, current_period_end = get_coal_compensation_period()
-            base_query = base_query.filter(bonus_period_start__isnull=False)
+            base_query = base_query.filter(
+                bonus_period_start__isnull=False,
+                bonus_period_start__gte=period_start,
+                bonus_period_start__lte=period_end,
+            )
         
         workers = apply_worker_category_filter(base_query, worker_category, status_field='status').order_by('full_name')
     else:
         base_query = Worker.objects.filter(
             user=request.user,
-            status='pensioner',
-            has_miner_glory=True
+            status__in=Worker.PENSIONER_STATUS_CODES,
+            has_miner_glory=True,
+            is_dead=False,
         )
         
         if not is_current_period:
-            # Для будущих периодов исключаем умерших
-            base_query = base_query.filter(is_dead=False)
-            # Исключаем тех, у кого награды появились в текущем периоде
-            current_period_start, current_period_end = get_coal_compensation_period()
-            base_query = base_query.filter(bonus_period_start__isnull=False)
+            base_query = base_query.filter(
+                bonus_period_start__isnull=False,
+                bonus_period_start__gte=period_start,
+                bonus_period_start__lte=period_end,
+            )
         
         workers = apply_worker_category_filter(base_query, worker_category, status_field='status').order_by('full_name')
     
@@ -3906,11 +3863,11 @@ def generate_bonus_payment_excel(request):
         if account_type_filter in {'20_digit', 'current'} and resolved_account_type != account_type_filter:
             continue
         
-        # Проверяем, есть ли данные для текущего периода
+        # Показываем начисления только если сохраненный период попадает в выбранный диапазон.
         bonus_accrued = None
         bonus_ipn = None
         bonus_to_pay = None
-        if worker.bonus_period_start == period_start:
+        if worker.bonus_period_start and period_start <= worker.bonus_period_start <= period_end:
             bonus_accrued = worker.bonus_accrued
             bonus_ipn = worker.bonus_ipn
             bonus_to_pay = worker.bonus_to_pay
@@ -4030,19 +3987,7 @@ def funeral_services_list(request):
     worker_category = get_worker_category_filter(request)
     account_type_filter = get_account_type_filter(request)
     
-    # Проверяем, выбран ли конкретный период через GET параметр
-    selected_period_start = request.GET.get('period_start')
-    if selected_period_start:
-        try:
-            period_start = date.fromisoformat(selected_period_start)
-            # Вычисляем period_end для выбранного периода
-            period_end = get_period_end_for_start(period_start)
-        except (ValueError, TypeError):
-            # Если невалидная дата, используем текущий период
-            period_start, period_end = get_coal_compensation_period()
-    else:
-        # Используем текущий период по умолчанию
-        period_start, period_end = get_coal_compensation_period()
+    period_start, period_end = get_requested_period(request, get_coal_compensation_period)
     
     # Получаем все заявления на погребение в выбранном периоде
     if user_is_admin:
@@ -4134,19 +4079,7 @@ def generate_funeral_services_excel(request):
     worker_category = get_worker_category_filter(request)
     account_type_filter = get_account_type_filter(request)
     
-    # Проверяем, выбран ли конкретный период через GET параметр
-    selected_period_start = request.GET.get('period_start')
-    if selected_period_start:
-        try:
-            period_start = date.fromisoformat(selected_period_start)
-            # Вычисляем period_end для выбранного периода
-            period_end = get_period_end_for_start(period_start)
-        except (ValueError, TypeError):
-            # Если невалидная дата, используем текущий период
-            period_start, period_end = get_coal_compensation_period()
-    else:
-        # Используем текущий период по умолчанию
-        period_start, period_end = get_coal_compensation_period()
+    period_start, period_end = get_requested_period(request, get_coal_compensation_period)
     
     # Получаем все заявления на погребение в выбранном периоде
     if user_is_admin:
@@ -4343,19 +4276,7 @@ def pensioner_material_assistance_list(request):
     worker_category = get_worker_category_filter(request)
     account_type_filter = get_account_type_filter(request)
     
-    # Проверяем, выбран ли конкретный период через GET параметр
-    selected_period_start = request.GET.get('period_start')
-    if selected_period_start:
-        try:
-            period_start = date.fromisoformat(selected_period_start)
-            # Вычисляем period_end для выбранного периода
-            period_end = get_period_end_for_start(period_start)
-        except (ValueError, TypeError):
-            # Если невалидная дата, используем текущий период
-            period_start, period_end = get_coal_compensation_period()
-    else:
-        # Используем текущий период по умолчанию
-        period_start, period_end = get_coal_compensation_period()
+    period_start, period_end = get_requested_period(request, get_coal_compensation_period)
     
     # Получаем все заявления на материальную помощь для пенсионеров (на лечение) в выбранном периоде
     if user_is_admin:
@@ -4496,15 +4417,7 @@ def material_assistance_registry_list(request):
     worker_category = get_worker_category_filter(request)
     account_type_filter = get_account_type_filter(request)
 
-    selected_period_start = request.GET.get('period_start')
-    if selected_period_start:
-        try:
-            period_start = date.fromisoformat(selected_period_start)
-            period_end = get_period_end_for_start(period_start)
-        except (ValueError, TypeError):
-            period_start, period_end = get_coal_compensation_period()
-    else:
-        period_start, period_end = get_coal_compensation_period()
+    period_start, period_end = get_requested_period(request, get_coal_compensation_period)
 
     if user_is_admin:
         material_requests = MaterialAssistanceRequest.objects.filter(
@@ -4598,15 +4511,7 @@ def generate_material_assistance_registry_excel(request):
     worker_category = get_worker_category_filter(request)
     account_type_filter = get_account_type_filter(request)
 
-    selected_period_start = request.GET.get('period_start')
-    if selected_period_start:
-        try:
-            period_start = date.fromisoformat(selected_period_start)
-            period_end = get_period_end_for_start(period_start)
-        except (ValueError, TypeError):
-            period_start, period_end = get_coal_compensation_period()
-    else:
-        period_start, period_end = get_coal_compensation_period()
+    period_start, period_end = get_requested_period(request, get_coal_compensation_period)
 
     if user_is_admin:
         material_requests = MaterialAssistanceRequest.objects.filter(
@@ -4786,19 +4691,7 @@ def generate_pensioner_material_assistance_excel(request):
     worker_category = get_worker_category_filter(request)
     account_type_filter = get_account_type_filter(request)
     
-    # Проверяем, выбран ли конкретный период через GET параметр
-    selected_period_start = request.GET.get('period_start')
-    if selected_period_start:
-        try:
-            period_start = date.fromisoformat(selected_period_start)
-            # Вычисляем period_end для выбранного периода
-            period_end = get_period_end_for_start(period_start)
-        except (ValueError, TypeError):
-            # Если невалидная дата, используем текущий период
-            period_start, period_end = get_coal_compensation_period()
-    else:
-        # Используем текущий период по умолчанию
-        period_start, period_end = get_coal_compensation_period()
+    period_start, period_end = get_requested_period(request, get_coal_compensation_period)
     
     # Получаем все заявления на материальную помощь для пенсионеров (на лечение) в выбранном периоде
     if user_is_admin:
@@ -5624,7 +5517,7 @@ def toggle_pensioner_material_assistance_issued(request, request_id):
 @login_required
 def delete_vacation_request(request, request_id):
     """Удаление заявления на путёвку."""
-    if request.method != 'POST':
+    if request.method not in ('POST', 'DELETE'):
         return JsonResponse({'error': 'Method not allowed'}, status=405)
     if is_admin(request.user):
         vacation = get_object_or_404(VacationRequest.objects.defer('price'), id=request_id)
@@ -5638,7 +5531,7 @@ def delete_vacation_request(request, request_id):
 @login_required
 def delete_coal_request(request, request_id):
     """Удаление заявления на уголь."""
-    if request.method != 'POST':
+    if request.method not in ('POST', 'DELETE'):
         return JsonResponse({'error': 'Method not allowed'}, status=405)
     if is_admin(request.user):
         coal_request = get_object_or_404(CoalRequest, id=request_id)
@@ -5651,7 +5544,7 @@ def delete_coal_request(request, request_id):
 @login_required
 def delete_material_assistance_request(request, request_id):
     """Удаление заявления на материальную помощь."""
-    if request.method != 'POST':
+    if request.method not in ('POST', 'DELETE'):
         return JsonResponse({'error': 'Method not allowed'}, status=405)
     if is_admin(request.user):
         material_request = get_object_or_404(MaterialAssistanceRequest, id=request_id)
@@ -5664,7 +5557,7 @@ def delete_material_assistance_request(request, request_id):
 @login_required
 def delete_funeral_request(request, request_id):
     """Удаление заявления на погребение."""
-    if request.method != 'POST':
+    if request.method not in ('POST', 'DELETE'):
         return JsonResponse({'error': 'Method not allowed'}, status=405)
     if is_admin(request.user):
         funeral_request = get_object_or_404(FuneralRequest, id=request_id)
