@@ -4093,13 +4093,22 @@ select {
     --safe-b: env(safe-area-inset-bottom, 0px);
   }
 
-  html {
+  /* The page must not zoom, pan sideways or bounce past its edges on phones. */
+  html,
+  body {
+    overscroll-behavior: none;
+    touch-action: manipulation;
     -webkit-text-size-adjust: 100%;
   }
 
   body {
     font-size: 15px;
-    overscroll-behavior-y: none;
+    overflow-x: hidden;
+  }
+
+  .app-shell {
+    max-width: 100vw;
+    overflow-x: clip;
   }
 
   button,
@@ -4319,9 +4328,21 @@ select {
     height: 40px;
   }
 
-  .select-sm {
+  /* Any field under 16px makes iOS zoom in on focus. */
+  .select-sm,
+  .year-picker input,
+  .table-input {
     min-height: 40px;
-    font-size: 15px;
+    font-size: 16px;
+  }
+
+  .pager-controls {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .pager-edge {
+    display: none;
   }
 
   .field-label {

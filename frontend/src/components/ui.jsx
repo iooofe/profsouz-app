@@ -309,7 +309,13 @@ export function Pagination({ page, pages, onChange, summary, children }) {
         {children}
         {pages > 1 && (
           <>
-            <IconButton icon={ChevronsLeft} label="Первая страница" disabled={page <= 1} onClick={() => onChange(1)} />
+            <IconButton
+              icon={ChevronsLeft}
+              label="Первая страница"
+              className="pager-edge"
+              disabled={page <= 1}
+              onClick={() => onChange(1)}
+            />
             <IconButton icon={ChevronLeft} label="Назад" disabled={page <= 1} onClick={() => onChange(page - 1)} />
             <span className="pager-page">
               {page} <span className="muted">из</span> {pages}
@@ -318,6 +324,7 @@ export function Pagination({ page, pages, onChange, summary, children }) {
             <IconButton
               icon={ChevronsRight}
               label="Последняя страница"
+              className="pager-edge"
               disabled={page >= pages}
               onClick={() => onChange(pages)}
             />
