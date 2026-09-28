@@ -442,7 +442,7 @@ def index(request):
             resort='zhartas',
             start_date__gte=period_start,
             start_date__lte=period_end,
-            is_rejected=False
+            is_rejected=False, request_status='active'
         ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     else:
         zhartas_vacations = VacationRequest.objects.filter(
@@ -450,7 +450,7 @@ def index(request):
             resort='zhartas',
             start_date__gte=period_start,
             start_date__lte=period_end,
-            is_rejected=False
+            is_rejected=False, request_status='active'
         ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     
     # Подготавливаем данные для таблицы ведомости Жартас
@@ -487,7 +487,7 @@ def index(request):
             resort='shakhter',
             start_date__gte=period_start,
             start_date__lte=period_end,
-            is_rejected=False
+            is_rejected=False, request_status='active'
         ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     else:
         shakhter_vacations = VacationRequest.objects.filter(
@@ -495,7 +495,7 @@ def index(request):
             resort='shakhter',
             start_date__gte=period_start,
             start_date__lte=period_end,
-            is_rejected=False
+            is_rejected=False, request_status='active'
         ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     
     # Подготавливаем данные для таблицы ведомости Шахтер
@@ -965,17 +965,18 @@ def create_vacation_request(request):
             from main.models import VacationLimit
             limit, created = VacationLimit.get_or_create_limit(request.user, resort)
             
-            # Подсчитываем количество мест для нового заявления
-            new_places = (1 if worker_goes else 0) + len(family_member_ids)  # работник (если едет) + члены семьи
-            
+            # Лимит учитывается в койко-днях: (работник, если едет, + члены семьи) × дни поездки
+            new_places = (1 if worker_goes else 0) + len(family_member_ids)
+            new_usage = new_places * trip_days
+
             used_places = limit.get_used_places()
             remaining_places = limit.get_remaining_places()
-            
-            if new_places > remaining_places:
+
+            if new_usage > remaining_places:
                 resort_name = dict(VacationRequest.RESORT_CHOICES).get(resort, resort)
                 messages.error(
-                    request, 
-                    f'Превышен лимит на путевки для {resort_name}! Доступно мест: {remaining_places}, требуется: {new_places}. '
+                    request,
+                    f'Превышен лимит на путевки для {resort_name}! Доступно койко-дней: {remaining_places}, требуется: {new_usage}. '
                     f'Использовано: {used_places}/{limit.limit}'
                 )
                 return redirect(f"{reverse('main:index')}?tab=applications")
@@ -1229,6 +1230,27 @@ def edit_vacation_request(request, request_id):
             if resort == 'discovery' and age >= 18:
                 if not vacation.study_certificate_file:
                     return JsonResponse({'error': f'Для {fm.get_relationship_display().lower()} {fm.full_name} старше 18 лет на курорт "Дискавери" необходимо прикрепить справку об очном обучении (отредактируйте заявление с приложением файла)'}, status=400)
+
+    # Проверяем лимит (в койко-днях), чтобы правкой нельзя было выйти за него.
+    # Заявление учитывается в лимите периода, в котором оно создано, поэтому проверяем только текущий период.
+    if not user_is_admin and resort in ('zhartas', 'shakhter'):
+        subdivision = ''
+        is_energougol = (vacation.user.username or '').strip().upper() == 'ЭНЕРГОУГОЛЬ'
+        if is_energougol:
+            subdivision = (vacation.worker.enterprise_subdivision or '').strip()
+        if not is_energougol or subdivision:
+            limit, _ = VacationLimit.get_or_create_limit(vacation.user, resort, subdivision)
+            period_end = VacationLimit.get_period_end(limit.period_start)
+            if limit.period_start <= vacation.created_at.date() <= period_end:
+                used = limit.get_used_places()
+                if vacation.resort == resort:
+                    used -= vacation.get_places_count() * max(vacation.get_duration_days(), 0)
+                new_usage = ((1 if worker_goes else 0) + family_members.count()) * trip_days
+                available = max(0, limit.limit - used)
+                if new_usage > available:
+                    return JsonResponse({
+                        'error': f'Превышен лимит путевок: доступно {available} койко-дн., требуется {new_usage}'
+                    }, status=400)
 
     # Применяем изменения
     vacation.resort = resort
@@ -1730,7 +1752,7 @@ def generate_zhartas_statement_excel(request):
             resort='zhartas',
             start_date__gte=period_start,
             start_date__lte=period_end,
-            is_rejected=False
+            is_rejected=False, request_status='active'
         ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     else:
         vacations = VacationRequest.objects.filter(
@@ -1738,7 +1760,7 @@ def generate_zhartas_statement_excel(request):
             resort='zhartas',
             start_date__gte=period_start,
             start_date__lte=period_end,
-            is_rejected=False
+            is_rejected=False, request_status='active'
         ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     
     # Создаем Excel файл
@@ -1902,7 +1924,7 @@ def generate_shakhter_statement_excel(request):
             resort='shakhter',
             start_date__gte=period_start,
             start_date__lte=period_end,
-            is_rejected=False
+            is_rejected=False, request_status='active'
         ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     else:
         vacations = VacationRequest.objects.filter(
@@ -1910,7 +1932,7 @@ def generate_shakhter_statement_excel(request):
             resort='shakhter',
             start_date__gte=period_start,
             start_date__lte=period_end,
-            is_rejected=False
+            is_rejected=False, request_status='active'
         ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     
     # Создаем Excel файл
@@ -3221,6 +3243,7 @@ def coal_compensation_list(request):
 
     coal_requests = apply_worker_category_filter(coal_requests, worker_category)
     coal_requests = apply_request_account_type_filter(coal_requests, account_type_filter)
+    coal_requests = coal_requests.exclude(request_status='inactive')
     
     # Подготавливаем данные для таблицы
     compensation_data = []
@@ -3337,6 +3360,7 @@ def generate_coal_compensation_excel(request):
 
     coal_requests = apply_worker_category_filter(coal_requests, worker_category)
     coal_requests = apply_request_account_type_filter(coal_requests, account_type_filter)
+    coal_requests = coal_requests.exclude(request_status='inactive')
 
     # Ведомость на выдачу: только НЕвыданные
     if request.GET.get('only_unissued') in ('1', 'true', 'True'):
@@ -4006,6 +4030,7 @@ def funeral_services_list(request):
 
     funeral_requests = apply_worker_category_filter(funeral_requests, worker_category)
     funeral_requests = apply_request_account_type_filter(funeral_requests, account_type_filter)
+    funeral_requests = funeral_requests.exclude(request_status='inactive')
     
     # Подготавливаем данные для таблицы
     funeral_data = []
@@ -4098,6 +4123,7 @@ def generate_funeral_services_excel(request):
 
     funeral_requests = apply_worker_category_filter(funeral_requests, worker_category)
     funeral_requests = apply_request_account_type_filter(funeral_requests, account_type_filter)
+    funeral_requests = funeral_requests.exclude(request_status='inactive')
     
     # Создаем Excel файл
     wb = Workbook()
@@ -4299,6 +4325,7 @@ def pensioner_material_assistance_list(request):
 
     material_requests = apply_worker_category_filter(material_requests, worker_category)
     material_requests = apply_request_account_type_filter(material_requests, account_type_filter)
+    material_requests = material_requests.exclude(request_status='inactive')
     
     # Подготавливаем данные для таблицы
     assistance_data = []
@@ -4714,6 +4741,7 @@ def generate_pensioner_material_assistance_excel(request):
 
     material_requests = apply_worker_category_filter(material_requests, worker_category)
     material_requests = apply_request_account_type_filter(material_requests, account_type_filter)
+    material_requests = material_requests.exclude(request_status='inactive')
 
     # Ведомость на выдачу: только НЕвыданные
     if request.GET.get('only_unissued') in ('1', 'true', 'True'):

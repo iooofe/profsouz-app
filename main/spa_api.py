@@ -772,11 +772,16 @@ def api_worker_detail(request, worker_id):
         return _api_error('Ошибка в данных работника', extra={'fields': worker_form.errors})
 
     family_payload = _parse_family_members_payload(data)
+    # Существующих членов семьи обновляем по id, а не пересоздаем:
+    # они связаны с уже оформленными путевками (M2M), и удаление стерло бы их из заявлений.
+    existing_family = {member.id: member for member in worker.family_members.all()}
     valid_family_forms = []
     for idx, member_data in enumerate(family_payload, 1):
         if not (member_data.get('full_name') or '').strip():
             continue
-        fm_form = FamilyMemberForm(member_data)
+        member_id = str(member_data.get('id') or '').strip()
+        instance = existing_family.get(int(member_id)) if member_id.isdigit() else None
+        fm_form = FamilyMemberForm(member_data, instance=instance)
         if fm_form.is_valid():
             valid_family_forms.append(fm_form)
         else:
@@ -797,11 +802,13 @@ def api_worker_detail(request, worker_id):
                 return _api_error('Пользователь для работника не найден')
         worker.save()
 
-        worker.family_members.all().delete()
+        kept_family_ids = set()
         for fm_form in valid_family_forms:
             fm = fm_form.save(commit=False)
             fm.worker = worker
             fm.save()
+            kept_family_ids.add(fm.id)
+        worker.family_members.exclude(id__in=kept_family_ids).delete()
 
     return JsonResponse({'success': True, 'worker': _serialize_worker(worker, include_family=True)})
 
@@ -917,10 +924,14 @@ def api_create_vacation_request(request):
         if is_energougol_user(request.user):
             enterprise_subdivision = (worker.enterprise_subdivision or source.get('enterprise_subdivision') or '').strip()
         limit, _ = VacationLimit.get_or_create_limit(request.user, resort, enterprise_subdivision)
-        new_places = (1 if worker_goes else 0) + len(family_member_ids)
-        if new_places > limit.get_remaining_places():
+        # Лимит учитывается в койко-днях (люди × дни), так же как в VacationLimit.get_used_places.
+        new_places = (1 if worker_goes else 0) + family_members.count()
+        new_usage = new_places * trip_days
+        remaining = limit.get_remaining_places()
+        if new_usage > remaining:
             return _api_error(
-                f'Превышен лимит путевок: доступно {limit.get_remaining_places()}, требуется {new_places}'
+                f'Превышен лимит путевок: доступно {remaining} койко-дн., '
+                f'требуется {new_usage} ({new_places} чел. × {trip_days} дн.)'
             )
 
     vacation = VacationRequest.objects.create(
@@ -993,6 +1004,10 @@ def api_create_material_request(request):
 
     if not assistance_type:
         return _api_error('Не выбран вид помощи')
+    if assistance_type not in dict(MaterialAssistanceRequest.ASSISTANCE_TYPE_CHOICES):
+        return _api_error('Некорректный вид помощи')
+    if worker.is_pensioner_like() and assistance_type != 'treatment':
+        return _api_error('Для пенсионеров доступна только помощь на лечение')
     account_type, account_number = _resolve_account_type_and_number(
         worker,
         account_type,
@@ -1429,14 +1444,14 @@ def api_statements(request):
             resort='zhartas',
             start_date__gte=period_start,
             start_date__lte=period_end,
-            is_rejected=False,
+            is_rejected=False, request_status='active',
         ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
 
         shakhter_qs = VacationRequest.objects.filter(
             resort='shakhter',
             start_date__gte=period_start,
             start_date__lte=period_end,
-            is_rejected=False,
+            is_rejected=False, request_status='active',
         ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
     else:
         zhartas_qs = VacationRequest.objects.filter(
@@ -1444,7 +1459,7 @@ def api_statements(request):
             resort='zhartas',
             start_date__gte=period_start,
             start_date__lte=period_end,
-            is_rejected=False,
+            is_rejected=False, request_status='active',
         ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
 
         shakhter_qs = VacationRequest.objects.filter(
@@ -1452,7 +1467,7 @@ def api_statements(request):
             resort='shakhter',
             start_date__gte=period_start,
             start_date__lte=period_end,
-            is_rejected=False,
+            is_rejected=False, request_status='active',
         ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
 
     zhartas_rows = []

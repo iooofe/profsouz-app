@@ -552,7 +552,7 @@ class VacationLimit(models.Model):
             resort=self.resort,
             created_at__date__gte=period_start,
             created_at__date__lte=period_end,
-            is_rejected=False
+            is_rejected=False, request_status='active'
         ).prefetch_related('family_members').defer('price')
         if self.enterprise_subdivision:
             requests = requests.filter(worker__enterprise_subdivision=self.enterprise_subdivision)
