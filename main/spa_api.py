@@ -2,6 +2,7 @@ import json
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 import calendar
+from urllib.parse import urlencode
 
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
@@ -1427,102 +1428,65 @@ def api_appeals(request):
 @api_login_required
 @require_http_methods(['GET'])
 def api_statements(request):
-    selected_period_start = request.GET.get('period_start')
-    if selected_period_start:
-        try:
-            period_start = date.fromisoformat(selected_period_start)
-            period_end = _period_end_from_start(period_start)
-        except Exception:
-            period_start, period_end = _get_statement_period()
-    else:
-        period_start, period_end = _get_statement_period()
+    # Период: месяц (period_start) или свои даты (start_date + end_date); категория — как в списках выплат.
+    from .views import apply_worker_category_filter, get_requested_period, get_worker_category_filter
+
+    custom_range = bool(request.GET.get('start_date') and request.GET.get('end_date'))
+    period_start, period_end = get_requested_period(request, _get_statement_period)
+    worker_category = get_worker_category_filter(request)
 
     user_is_admin = is_admin(request.user)
 
-    if user_is_admin:
-        zhartas_qs = VacationRequest.objects.filter(
-            resort='zhartas',
+    def vacations_for(resort):
+        qs = VacationRequest.objects.filter(
+            resort=resort,
             start_date__gte=period_start,
             start_date__lte=period_end,
             is_rejected=False, request_status='active',
-        ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
+        )
+        if not user_is_admin:
+            qs = qs.filter(user=request.user)
+        qs = apply_worker_category_filter(qs, worker_category)
+        return qs.select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
 
-        shakhter_qs = VacationRequest.objects.filter(
-            resort='shakhter',
-            start_date__gte=period_start,
-            start_date__lte=period_end,
-            is_rejected=False, request_status='active',
-        ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
-    else:
-        zhartas_qs = VacationRequest.objects.filter(
-            user=request.user,
-            resort='zhartas',
-            start_date__gte=period_start,
-            start_date__lte=period_end,
-            is_rejected=False, request_status='active',
-        ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
+    def rows_for(qs):
+        rows, total = [], 0.0
+        for idx, vacation in enumerate(qs, 1):
+            vouchers = vacation.get_places_count()
+            bed_days = vouchers * vacation.get_duration_days()
+            effective_price = _vacation_effective_price(vacation)
+            try:
+                price = float(effective_price) if effective_price is not None else 0.0
+            except (TypeError, ValueError, InvalidOperation):
+                price = 0.0
+            total += price
+            rows.append({
+                'number': idx,
+                'full_name': vacation.worker.full_name,
+                'personnel_number': vacation.worker.personnel_number,
+                'inn': vacation.worker.inn or '',
+                'worker_status_display': vacation.worker.get_status_display(),
+                'vouchers_count': vouchers,
+                'bed_days': bed_days,
+                'price': price,
+                'vacation_id': vacation.id,
+                'worker_id': vacation.worker.id,
+                'user_account': vacation.user.username if user_is_admin else None,
+            })
+        return rows, total
 
-        shakhter_qs = VacationRequest.objects.filter(
-            user=request.user,
-            resort='shakhter',
-            start_date__gte=period_start,
-            start_date__lte=period_end,
-            is_rejected=False, request_status='active',
-        ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
+    zhartas_rows, zhartas_total = rows_for(vacations_for('zhartas'))
+    shakhter_rows, shakhter_total = rows_for(vacations_for('shakhter'))
 
-    zhartas_rows = []
-    zhartas_total = 0.0
-    for idx, vacation in enumerate(zhartas_qs, 1):
-        vouchers = vacation.get_places_count()
-        bed_days = vouchers * vacation.get_duration_days()
-        effective_price = _vacation_effective_price(vacation)
-        try:
-            price = float(effective_price) if effective_price is not None else 0.0
-        except (TypeError, ValueError, InvalidOperation):
-            price = 0.0
-        zhartas_total += price
-        zhartas_rows.append({
-            'number': idx,
-            'full_name': vacation.worker.full_name,
-            'personnel_number': vacation.worker.personnel_number,
-            'vouchers_count': vouchers,
-            'bed_days': bed_days,
-            'price': price,
-            'vacation_id': vacation.id,
-            'worker_id': vacation.worker.id,
-            'user_account': vacation.user.username if user_is_admin else None,
-        })
-
-    shakhter_rows = []
-    shakhter_total = 0.0
-    for idx, vacation in enumerate(shakhter_qs, 1):
-        vouchers = vacation.get_places_count()
-        bed_days = vouchers * vacation.get_duration_days()
-        effective_price = _vacation_effective_price(vacation)
-        try:
-            price = float(effective_price) if effective_price is not None else 0.0
-        except (TypeError, ValueError, InvalidOperation):
-            price = 0.0
-        shakhter_total += price
-        shakhter_rows.append({
-            'number': idx,
-            'full_name': vacation.worker.full_name,
-            'personnel_number': vacation.worker.personnel_number,
-            'vouchers_count': vouchers,
-            'bed_days': bed_days,
-            'price': price,
-            'vacation_id': vacation.id,
-            'worker_id': vacation.worker.id,
-            'user_account': vacation.user.username if user_is_admin else None,
-        })
-
-    if user_is_admin:
+    def computed_status():
         today = timezone.now().date()
-        is_current_period = period_start <= today <= period_end
-        status_code = 'active' if is_current_period else 'closed'
-        status_display = 'Ведется' if is_current_period else 'Закрыт'
-        zhartas_status = {'code': status_code, 'label': status_display}
-        shakhter_status = {'code': status_code, 'label': status_display}
+        is_current = period_start <= today <= period_end
+        return {'code': 'active' if is_current else 'closed', 'label': 'Ведется' if is_current else 'Закрыт'}
+
+    if user_is_admin or custom_range:
+        # Для произвольных дат ведомость не сохраняется — статус считаем по сегодняшней дате.
+        zhartas_status = computed_status()
+        shakhter_status = computed_status()
     else:
         zhartas_statement, _ = Statement.get_or_create_statement(request.user, period_start, period_end, 'zhartas')
         shakhter_statement, _ = Statement.get_or_create_statement(request.user, period_start, period_end, 'shakhter')
@@ -1545,8 +1509,16 @@ def api_statements(request):
             continue
         normalized_periods.add(date(d.year, d.month, 1))
 
-    normalized_periods.add(period_start)
+    if not custom_range:
+        normalized_periods.add(period_start)
     all_periods = sorted(list(normalized_periods), reverse=True)
+
+    excel_params = {'worker_category': worker_category} if worker_category != 'all' else {}
+    if custom_range:
+        excel_params.update({'start_date': _date_iso(period_start), 'end_date': _date_iso(period_end)})
+    else:
+        excel_params['period_start'] = _date_iso(period_start)
+    excel_query = urlencode(excel_params)
 
     return JsonResponse({
         'success': True,
@@ -1554,6 +1526,8 @@ def api_statements(request):
         'period_end': _date_iso(period_end),
         'period_start_human': _date_human(period_start),
         'period_end_human': _date_human(period_end),
+        'custom_range': custom_range,
+        'worker_category': worker_category,
         'all_periods': [
             {
                 'period_start': _date_iso(p),
@@ -1565,12 +1539,12 @@ def api_statements(request):
             'status': zhartas_status,
             'rows': zhartas_rows,
             'total_sum': zhartas_total,
-            'excel_url': f"{reverse('main:generate_zhartas_statement_excel')}?period_start={_date_iso(period_start)}",
+            'excel_url': f"{reverse('main:generate_zhartas_statement_excel')}?{excel_query}",
         },
         'shakhter': {
             'status': shakhter_status,
             'rows': shakhter_rows,
             'total_sum': shakhter_total,
-            'excel_url': f"{reverse('main:generate_shakhter_statement_excel')}?period_start={_date_iso(period_start)}",
+            'excel_url': f"{reverse('main:generate_shakhter_statement_excel')}?{excel_query}",
         },
     })

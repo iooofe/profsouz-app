@@ -171,7 +171,24 @@ def get_account_type_filter(request):
     return (request.GET.get('account_type_filter') or 'all').strip()
 
 
+WORKER_CATEGORY_LABELS = {
+    WORKER_CATEGORY_WORKERS: 'Работающие (работники и регрессники-работники)',
+    WORKER_CATEGORY_PENSIONERS: 'Пенсионеры (включая регрессников-пенсионеров)',
+    WORKER_CATEGORY_REGRESS: 'Все регрессники',
+}
+
+
+def get_worker_category_label(category):
+    """Подпись категории для заголовков Excel; пусто, если фильтра нет."""
+    if category in WORKER_CATEGORY_LABELS:
+        return WORKER_CATEGORY_LABELS[category]
+    return dict(Worker.STATUS_CHOICES).get(category, '')
+
+
 def apply_worker_category_filter(queryset, category, status_field='worker__status'):
+    # Точный статус работника (например, только «Регрессник пенсионер»)
+    if category in dict(Worker.STATUS_CHOICES):
+        return queryset.filter(**{status_field: category})
     if category == WORKER_CATEGORY_WORKERS:
         statuses = [Worker.STATUS_WORKER, Worker.STATUS_REGRESSNIK_WORKER]
     elif category == WORKER_CATEGORY_PENSIONERS:
@@ -1727,50 +1744,30 @@ def set_vacation_limit(request):
     return redirect(f"{reverse('main:index')}?tab=applications")
 
 
-@login_required
-def generate_zhartas_statement_excel(request):
-    """Генерация Excel файла ведомости путевок за Жартас"""
+def generate_statement_excel(request, resort, resort_label):
+    """Excel ведомости путевок курорта за период (месяц или свои даты) с фильтром по категории работников."""
     user_is_admin = is_admin(request.user)
-    
-    # Проверяем, выбран ли конкретный период через GET параметр
-    selected_period_start = request.GET.get('period_start')
-    if selected_period_start:
-        try:
-            period_start = date.fromisoformat(selected_period_start)
-            # Вычисляем period_end для выбранного периода
-            period_end = get_period_end_for_start(period_start)
-        except (ValueError, TypeError):
-            # Если невалидная дата, используем текущий период
-            period_start, period_end = get_statement_period()
-    else:
-        # Используем текущий период по умолчанию
-        period_start, period_end = get_statement_period()
-    
-    # Получаем все путевки за Жартас в выбранном периоде
-    if user_is_admin:
-        vacations = VacationRequest.objects.filter(
-            resort='zhartas',
-            start_date__gte=period_start,
-            start_date__lte=period_end,
-            is_rejected=False, request_status='active'
-        ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
-    else:
-        vacations = VacationRequest.objects.filter(
-            user=request.user,
-            resort='zhartas',
-            start_date__gte=period_start,
-            start_date__lte=period_end,
-            is_rejected=False, request_status='active'
-        ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
-    
-    # Создаем Excel файл
+    period_start, period_end = get_requested_period(request)
+    worker_category = get_worker_category_filter(request)
+
+    vacations = VacationRequest.objects.filter(
+        resort=resort,
+        start_date__gte=period_start,
+        start_date__lte=period_end,
+        is_rejected=False,
+        request_status='active',
+    )
+    if not user_is_admin:
+        vacations = vacations.filter(user=request.user)
+    vacations = apply_worker_category_filter(vacations, worker_category)
+    vacations = vacations.select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
+
     wb = Workbook()
     ws = wb.active
     ws.title = safe_excel_sheet_title(
-        f"Ведомость Жартас {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
+        f"Ведомость {resort_label} {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
     )
-    
-    # Стили - улучшенные
+
     header_fill = PatternFill(start_color=EXCEL_HEADER_COLOR, end_color=EXCEL_HEADER_COLOR, fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=12, name='Arial')
     title_font = Font(bold=True, size=18, color="FFFFFF", name='Arial')
@@ -1782,191 +1779,28 @@ def generate_zhartas_statement_excel(request):
     )
     center_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     right_alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
-    
-    # Заголовок
-    ws.merge_cells('A1:F1')
+
+    headers = ['Порядковый номер', 'ФИО', 'Табельный номер', 'ИИН', 'Количество путевок', 'Койка/дней', 'Сумма путевки']
+    max_col = len(headers)
+    last_col = get_column_letter(max_col)
+
+    ws.merge_cells(f'A1:{last_col}1')
     title_cell = ws['A1']
-    title_cell.value = f'Ведомость путевок за Жартас с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}'
+    title_cell.value = f'Ведомость путевок за {resort_label} с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}'
     title_cell.font = title_font
     title_cell.fill = header_fill
     title_cell.alignment = center_alignment
     title_cell.border = border_style
     ws.row_dimensions[1].height = 35
-    
-    # Заголовки таблицы
-    headers = ['Порядковый номер', 'ФИО', 'Табельный номер', 'Количество путевок', 'Койка/дней', 'Сумма путевки']
-    for col_num, header in enumerate(headers, 1):
-        cell = ws.cell(row=3, column=col_num)
-        cell.value = header
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = center_alignment
-        cell.border = border_style
-    
-    # Данные
-    row_num = 4
-    total_sum = 0
-    
-    for vacation in vacations:
-        # Порядковый номер
-        ws.cell(row=row_num, column=1, value=row_num - 3).alignment = center_alignment
 
-        # ФИО
-        ws.cell(row=row_num, column=2, value=vacation.worker.full_name)
-        
-        # Табельный номер
-        ws.cell(row=row_num, column=3, value=vacation.worker.personnel_number).alignment = center_alignment
-        
-        # Количество путевок (только работник, без членов семьи) - всегда 1
-        ws.cell(row=row_num, column=4, value=1).alignment = center_alignment
-        
-        # Койка/дней (количество путевок включая членов семьи * количество дней)
-        people_count = vacation.get_places_count()
-        days = vacation.get_duration_days()
-        bed_days = people_count * days
-        ws.cell(row=row_num, column=5, value=bed_days).alignment = center_alignment
-        
-        # Сумма путевки
-        price = get_vacation_price_float(vacation)
-        ws.cell(row=row_num, column=6, value=price).alignment = right_alignment
-        ws.cell(row=row_num, column=6).number_format = EXCEL_CURRENCY_FORMAT
-        total_sum += price
-        
-        # Применяем границы
-        max_col = 6
-        for col in range(1, max_col + 1):
-            ws.cell(row=row_num, column=col).border = border_style
-        
-        row_num += 1
-    
-    # Итоговая строка
-    total_fill = PatternFill(start_color=EXCEL_TOTAL_FILL_COLOR, end_color=EXCEL_TOTAL_FILL_COLOR, fill_type="solid")
-    total_font = Font(bold=True, size=12, name='Arial')
-    
-    ws.merge_cells(f'A{row_num}:E{row_num}')
-    total_sum_col = 6
-    
-    total_cell = ws[f'A{row_num}']
-    total_cell.value = 'ИТОГО:'
-    total_cell.font = total_font
-    total_cell.alignment = right_alignment
-    total_cell.border = border_style
-    total_cell.fill = total_fill
-    
-    total_sum_cell = ws.cell(row=row_num, column=total_sum_col)
-    total_sum_cell.value = total_sum
-    total_sum_cell.font = total_font
-    total_sum_cell.alignment = right_alignment
-    total_sum_cell.number_format = EXCEL_CURRENCY_FORMAT
-    total_sum_cell.border = border_style
-    total_sum_cell.fill = total_fill
-    
-    # Применяем границы ко всем ячейкам итоговой строки
-    max_col = 6
-    for col in range(1, max_col + 1):
-        ws.cell(row=row_num, column=col).border = border_style
-        if col < max_col:
-            ws.cell(row=row_num, column=col).fill = total_fill
-    
-    # Настройка ширины колонок
-    ws.column_dimensions['A'].width = 18
-    ws.column_dimensions['B'].width = 30
-    ws.column_dimensions['C'].width = 18
-    ws.column_dimensions['D'].width = 20
-    ws.column_dimensions['E'].width = 15
-    ws.column_dimensions['F'].width = 18
+    category_label = get_worker_category_label(worker_category)
+    if category_label:
+        ws.merge_cells(f'A2:{last_col}2')
+        category_cell = ws['A2']
+        category_cell.value = f'Категория: {category_label}'
+        category_cell.font = Font(bold=True, size=12, name='Arial')
+        category_cell.alignment = center_alignment
 
-    max_col = 6
-    ws.auto_filter.ref = f"A3:{get_column_letter(max_col)}{max(row_num - 1, 3)}"
-    ws.freeze_panes = 'A4'
-    
-    # Сохраняем в BytesIO
-    buffer = BytesIO()
-    wb.save(buffer)
-    buffer.seek(0)
-    
-    response = HttpResponse(
-        buffer.getvalue(),
-        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
-    filename = f"Ведомость_Жартас_{period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}.xlsx"
-    # Правильная кодировка имени файла для кириллицы
-    # Используем транслитерацию для максимальной совместимости с браузерами
-    safe_filename = transliterate_filename(filename)
-    # Используем только транслитерированное имя для гарантированной работы во всех браузерах
-    response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
-    
-    return response
-
-
-@login_required
-def generate_shakhter_statement_excel(request):
-    """Генерация Excel файла ведомости путевок за Шахтер"""
-    user_is_admin = is_admin(request.user)
-    
-    # Проверяем, выбран ли конкретный период через GET параметр
-    selected_period_start = request.GET.get('period_start')
-    if selected_period_start:
-        try:
-            period_start = date.fromisoformat(selected_period_start)
-            # Вычисляем period_end для выбранного периода
-            period_end = get_period_end_for_start(period_start)
-        except (ValueError, TypeError):
-            # Если невалидная дата, используем текущий период
-            period_start, period_end = get_statement_period()
-    else:
-        # Используем текущий период по умолчанию
-        period_start, period_end = get_statement_period()
-    
-    # Получаем все путевки за Шахтер в выбранном периоде (только не отмененные)
-    if user_is_admin:
-        vacations = VacationRequest.objects.filter(
-            resort='shakhter',
-            start_date__gte=period_start,
-            start_date__lte=period_end,
-            is_rejected=False, request_status='active'
-        ).select_related('worker', 'user').prefetch_related('family_members').defer('price').order_by('worker__full_name')
-    else:
-        vacations = VacationRequest.objects.filter(
-            user=request.user,
-            resort='shakhter',
-            start_date__gte=period_start,
-            start_date__lte=period_end,
-            is_rejected=False, request_status='active'
-        ).select_related('worker').prefetch_related('family_members').defer('price').order_by('worker__full_name')
-    
-    # Создаем Excel файл
-    wb = Workbook()
-    ws = wb.active
-    ws.title = safe_excel_sheet_title(
-        f"Ведомость Шахтер {period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}"
-    )
-    
-    # Стили - улучшенные
-    header_fill = PatternFill(start_color=EXCEL_HEADER_COLOR, end_color=EXCEL_HEADER_COLOR, fill_type="solid")
-    header_font = Font(bold=True, color="FFFFFF", size=12, name='Arial')
-    title_font = Font(bold=True, size=18, color="FFFFFF", name='Arial')
-    border_style = Border(
-        left=Side(style='thin', color=EXCEL_BORDER_COLOR),
-        right=Side(style='thin', color=EXCEL_BORDER_COLOR),
-        top=Side(style='thin', color=EXCEL_BORDER_COLOR),
-        bottom=Side(style='thin', color=EXCEL_BORDER_COLOR)
-    )
-    center_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    right_alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
-    
-    # Заголовок
-    ws.merge_cells('A1:F1')
-    title_cell = ws['A1']
-    title_cell.value = f'Ведомость путевок за Шахтер с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}'
-    title_cell.font = title_font
-    title_cell.fill = header_fill
-    title_cell.alignment = center_alignment
-    title_cell.border = border_style
-    ws.row_dimensions[1].height = 35
-    
-    # Заголовки таблицы
-    headers = ['Порядковый номер', 'ФИО', 'Табельный номер', 'Количество путевок', 'Койка/дней', 'Сумма путевки']
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=3, column=col_num)
         cell.value = header
@@ -1975,100 +1809,71 @@ def generate_shakhter_statement_excel(request):
         cell.alignment = center_alignment
         cell.border = border_style
     ws.row_dimensions[3].height = 30
-    
-    # Данные
+
     row_num = 4
     total_sum = 0
-    
     for vacation in vacations:
-        # Порядковый номер
+        worker = vacation.worker
         ws.cell(row=row_num, column=1, value=row_num - 3).alignment = center_alignment
-        
-        # ФИО
-        ws.cell(row=row_num, column=2, value=vacation.worker.full_name)
-        
-        # Табельный номер
-        ws.cell(row=row_num, column=3, value=vacation.worker.personnel_number).alignment = center_alignment
-        
+        ws.cell(row=row_num, column=2, value=worker.full_name)
+        ws.cell(row=row_num, column=3, value=worker.personnel_number).alignment = center_alignment
+        ws.cell(row=row_num, column=4, value=worker.inn or '').alignment = center_alignment
         # Количество путевок (только работник, без членов семьи) - всегда 1
-        ws.cell(row=row_num, column=4, value=1).alignment = center_alignment
-        
-        # Койка/дней (количество путевок включая членов семьи * количество дней)
-        people_count = vacation.get_places_count()
-        days = vacation.get_duration_days()
-        bed_days = people_count * days
-        ws.cell(row=row_num, column=5, value=bed_days).alignment = center_alignment
-        
-        # Сумма путевки
+        ws.cell(row=row_num, column=5, value=1).alignment = center_alignment
+        # Койка/дней = все отдыхающие (включая членов семьи) × дни
+        bed_days = vacation.get_places_count() * vacation.get_duration_days()
+        ws.cell(row=row_num, column=6, value=bed_days).alignment = center_alignment
         price = get_vacation_price_float(vacation)
-        ws.cell(row=row_num, column=6, value=price).alignment = right_alignment
-        ws.cell(row=row_num, column=6).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=7, value=price).alignment = right_alignment
+        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
         total_sum += price
-        
-        # Применяем границы
-        max_col = 6
         for col in range(1, max_col + 1):
             ws.cell(row=row_num, column=col).border = border_style
-        
         row_num += 1
-    
-    # Итоговая строка
+
     total_fill = PatternFill(start_color=EXCEL_TOTAL_FILL_COLOR, end_color=EXCEL_TOTAL_FILL_COLOR, fill_type="solid")
     total_font = Font(bold=True, size=12, name='Arial')
-    
-    ws.merge_cells(f'A{row_num}:E{row_num}')
-    total_sum_col = 6
-    max_col = 6
-    
+    ws.merge_cells(f'A{row_num}:{get_column_letter(max_col - 1)}{row_num}')
     total_cell = ws[f'A{row_num}']
     total_cell.value = 'ИТОГО:'
     total_cell.font = total_font
     total_cell.alignment = right_alignment
-    total_cell.border = border_style
-    total_cell.fill = total_fill
-    
-    total_sum_cell = ws.cell(row=row_num, column=total_sum_col)
+    total_sum_cell = ws.cell(row=row_num, column=max_col)
     total_sum_cell.value = total_sum
     total_sum_cell.font = total_font
     total_sum_cell.alignment = right_alignment
     total_sum_cell.number_format = EXCEL_CURRENCY_FORMAT
-    total_sum_cell.border = border_style
-    total_sum_cell.fill = total_fill
-    
-    # Применяем границы ко всем ячейкам итоговой строки
     for col in range(1, max_col + 1):
         ws.cell(row=row_num, column=col).border = border_style
-        if col < max_col:
-            ws.cell(row=row_num, column=col).fill = total_fill
-    
-    # Настройка ширины колонок
-    ws.column_dimensions['A'].width = 18
-    ws.column_dimensions['B'].width = 30
-    ws.column_dimensions['C'].width = 18
-    ws.column_dimensions['D'].width = 20
-    ws.column_dimensions['E'].width = 15
-    ws.column_dimensions['F'].width = 18
+        ws.cell(row=row_num, column=col).fill = total_fill
 
-    ws.auto_filter.ref = f"A3:{get_column_letter(max_col)}{max(row_num - 1, 3)}"
+    for letter, width in zip('ABCDEFG', (18, 30, 18, 16, 20, 15, 18)):
+        ws.column_dimensions[letter].width = width
+    ws.auto_filter.ref = f"A3:{last_col}{max(row_num - 1, 3)}"
     ws.freeze_panes = 'A4'
-    
-    # Сохраняем в BytesIO
+
     buffer = BytesIO()
     wb.save(buffer)
     buffer.seek(0)
-    
     response = HttpResponse(
         buffer.getvalue(),
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
-    filename = f"Ведомость_Шахтер_{period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}.xlsx"
-    # Правильная кодировка имени файла для кириллицы
-    # Используем транслитерацию для максимальной совместимости с браузерами
-    safe_filename = transliterate_filename(filename)
-    # Используем только транслитерированное имя для гарантированной работы во всех браузерах
-    response['Content-Disposition'] = f'attachment; filename="{safe_filename}"'
-    
+    filename = f"Ведомость_{resort_label}_{period_start.strftime('%d.%m.%Y')}-{period_end.strftime('%d.%m.%Y')}.xlsx"
+    response['Content-Disposition'] = f'attachment; filename="{transliterate_filename(filename)}"'
     return response
+
+
+@login_required
+def generate_zhartas_statement_excel(request):
+    """Генерация Excel файла ведомости путевок за Жартас"""
+    return generate_statement_excel(request, 'zhartas', 'Жартас')
+
+
+@login_required
+def generate_shakhter_statement_excel(request):
+    """Генерация Excel файла ведомости путевок за Шахтер"""
+    return generate_statement_excel(request, 'shakhter', 'Шахтер')
 
 
 @login_required
@@ -3265,6 +3070,7 @@ def coal_compensation_list(request):
         compensation_data.append({
             'number': idx,
             'full_name': worker.full_name,
+            'personnel_number': worker.personnel_number or '',
             'inn': worker.inn or '',
             'worker_status': worker.status,
             'worker_status_display': worker.get_status_display(),
@@ -3388,7 +3194,7 @@ def generate_coal_compensation_excel(request):
     right_alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
     
     # Красивый заголовок
-    ws.merge_cells('A1:I1')
+    ws.merge_cells('A1:J1')
     title_cell = ws['A1']
     title_cell.value = f'СПИСОК КОМПЕНСАЦИИ ЗА УГОЛЬ'
     title_cell.font = title_font
@@ -3398,7 +3204,7 @@ def generate_coal_compensation_excel(request):
     ws.row_dimensions[1].height = 35
     
     # Период
-    ws.merge_cells('A2:I2')
+    ws.merge_cells('A2:J2')
     period_cell = ws['A2']
     period_cell.value = (
         f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}\n'
@@ -3419,7 +3225,7 @@ def generate_coal_compensation_excel(request):
         status_text = 'Статус: Закрыт'
         status_fill = PatternFill(start_color=EXCEL_STATUS_CLOSED_COLOR, end_color=EXCEL_STATUS_CLOSED_COLOR, fill_type="solid")
     
-    ws.merge_cells('A3:I3')
+    ws.merge_cells('A3:J3')
     status_cell = ws['A3']
     status_cell.value = status_text
     status_cell.font = Font(bold=True, size=12, color="FFFFFF", name='Arial')
@@ -3432,7 +3238,7 @@ def generate_coal_compensation_excel(request):
     ws.row_dimensions[4].height = 5
     
     # Заголовки таблицы
-    headers = ['№', 'ФИО', 'ИИН', 'Счет карты', 'Банк', 'Льготы', 'Начислено', 'ИПН', 'К выплате']
+    headers = ['№', 'ФИО', 'Табельный номер', 'ИИН', 'Счет карты', 'Банк', 'Льготы', 'Начислено', 'ИПН', 'К выплате']
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=5, column=col_num)
         cell.value = header
@@ -3454,42 +3260,45 @@ def generate_coal_compensation_excel(request):
         # ФИО
         ws.cell(row=row_num, column=2, value=worker.full_name).alignment = left_alignment
         
+        # Табельный номер
+        ws.cell(row=row_num, column=3, value=worker.personnel_number or '').alignment = center_alignment
+
         # ИИН
-        ws.cell(row=row_num, column=3, value=worker.inn or '').alignment = center_alignment
+        ws.cell(row=row_num, column=4, value=worker.inn or '').alignment = center_alignment
         
         # Счет (карточный или текущий)
         if coal_request.account_type == '20_digit':
             account_number = coal_request.account_number or worker.account_20_digit or ''
         else:
             account_number = coal_request.account_number or worker.current_account or ''
-        ws.cell(row=row_num, column=4, value=account_number).alignment = left_alignment
+        ws.cell(row=row_num, column=5, value=account_number).alignment = left_alignment
         
         # Банк (всегда Народный Банк)
-        ws.cell(row=row_num, column=5, value='Народный Банк').alignment = center_alignment
+        ws.cell(row=row_num, column=6, value='Народный Банк').alignment = center_alignment
         
         # Льготы (для умерших пенсионеров не показываем льготы)
         benefits = ''
         if not bool(worker.is_dead) and bool(worker.has_benefits) and worker.benefits_name:
             benefits = worker.benefits_name
-        ws.cell(row=row_num, column=6, value=benefits).alignment = left_alignment
+        ws.cell(row=row_num, column=7, value=benefits).alignment = left_alignment
         
         # Начислено
         accrued_value = coal_request.accrued if coal_request.accrued else ''
-        ws.cell(row=row_num, column=7, value=accrued_value).alignment = right_alignment
-        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=8, value=accrued_value).alignment = right_alignment
+        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
         
         # ИПН
         ipn_value = coal_request.ipn if coal_request.ipn else ''
-        ws.cell(row=row_num, column=8, value=ipn_value).alignment = right_alignment
-        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=9, value=ipn_value).alignment = right_alignment
+        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
         
         # К выплате
         to_pay_value = coal_request.to_pay if coal_request.to_pay else ''
-        ws.cell(row=row_num, column=9, value=to_pay_value).alignment = right_alignment
-        ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=10, value=to_pay_value).alignment = right_alignment
+        ws.cell(row=row_num, column=10).number_format = EXCEL_CURRENCY_FORMAT
         
         # Применяем границы
-        max_col = 9
+        max_col = 10
         for col in range(1, max_col + 1):
             ws.cell(row=row_num, column=col).border = border_style
         
@@ -3505,18 +3314,18 @@ def generate_coal_compensation_excel(request):
     
     ws.cell(row=row_num, column=1, value='ИТОГО:').font = total_font
     ws.cell(row=row_num, column=1).alignment = right_alignment
-    ws.merge_cells(f'A{row_num}:F{row_num}')
-    ws.cell(row=row_num, column=7, value=total_accrued).font = total_font
-    ws.cell(row=row_num, column=7).alignment = right_alignment
-    ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
-    ws.cell(row=row_num, column=8, value=total_ipn).font = total_font
+    ws.merge_cells(f'A{row_num}:G{row_num}')
+    ws.cell(row=row_num, column=8, value=total_accrued).font = total_font
     ws.cell(row=row_num, column=8).alignment = right_alignment
     ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
-    ws.cell(row=row_num, column=9, value=total_to_pay).font = total_font
+    ws.cell(row=row_num, column=9, value=total_ipn).font = total_font
     ws.cell(row=row_num, column=9).alignment = right_alignment
     ws.cell(row=row_num, column=9).number_format = EXCEL_CURRENCY_FORMAT
+    ws.cell(row=row_num, column=10, value=total_to_pay).font = total_font
+    ws.cell(row=row_num, column=10).alignment = right_alignment
+    ws.cell(row=row_num, column=10).number_format = EXCEL_CURRENCY_FORMAT
     
-    max_col = 9
+    max_col = 10
     for col in range(1, max_col + 1):
         ws.cell(row=row_num, column=col).border = border_style
         ws.cell(row=row_num, column=col).fill = total_fill
@@ -3524,13 +3333,14 @@ def generate_coal_compensation_excel(request):
     # Настройка ширины колонок
     ws.column_dimensions['A'].width = 8  # №
     ws.column_dimensions['B'].width = 35  # ФИО
-    ws.column_dimensions['C'].width = 15  # ИИН
-    ws.column_dimensions['D'].width = 25  # Счет карты
-    ws.column_dimensions['E'].width = 18  # Банк
-    ws.column_dimensions['F'].width = 25  # Льготы
-    ws.column_dimensions['G'].width = 15  # Начислено
-    ws.column_dimensions['H'].width = 15  # ИПН
-    ws.column_dimensions['I'].width = 15  # К выплате
+    ws.column_dimensions['C'].width = 16  # Табельный номер
+    ws.column_dimensions['D'].width = 15  # ИИН
+    ws.column_dimensions['E'].width = 25  # Счет карты
+    ws.column_dimensions['F'].width = 18  # Банк
+    ws.column_dimensions['G'].width = 25  # Льготы
+    ws.column_dimensions['H'].width = 15  # Начислено
+    ws.column_dimensions['I'].width = 15  # ИПН
+    ws.column_dimensions['J'].width = 15  # К выплате
     
     # Высота строк
     ws.row_dimensions[1].height = 30
@@ -3539,7 +3349,7 @@ def generate_coal_compensation_excel(request):
     ws.row_dimensions[4].height = 6
     ws.row_dimensions[5].height = 30
 
-    max_col = 9
+    max_col = 10
     ws.auto_filter.ref = f"A5:{get_column_letter(max_col)}{max(row_num - 1, 5)}"
     ws.freeze_panes = 'A6'
     
@@ -4051,6 +3861,7 @@ def funeral_services_list(request):
             'worker_status_display': worker.get_status_display(),
             'account_number': account_number,
             'pensioner_full_name': worker.full_name,
+            'pensioner_death_date': worker.death_date.strftime('%d.%m.%Y') if worker.death_date else '',
             'bank': 'Народный Банк',
             'to_pay': str(funeral_request.to_pay) if funeral_request.to_pay else '',
             'funeral_request_id': funeral_request.id,
@@ -4147,7 +3958,7 @@ def generate_funeral_services_excel(request):
     right_alignment = Alignment(horizontal='right', vertical='center', wrap_text=True)
     
     # Красивый заголовок
-    ws.merge_cells('A1:G1')
+    ws.merge_cells('A1:H1')
     title_cell = ws['A1']
     title_cell.value = f'СПИСОК РИТУАЛЬНЫХ УСЛУГ'
     title_cell.font = title_font
@@ -4157,7 +3968,7 @@ def generate_funeral_services_excel(request):
     ws.row_dimensions[1].height = 35
     
     # Период
-    ws.merge_cells('A2:G2')
+    ws.merge_cells('A2:H2')
     period_cell = ws['A2']
     period_cell.value = (
         f'Период: с {period_start.strftime("%d.%m.%Y")} по {period_end.strftime("%d.%m.%Y")}\n'
@@ -4178,7 +3989,7 @@ def generate_funeral_services_excel(request):
         status_text = 'Статус: Закрыт'
         status_fill = PatternFill(start_color=EXCEL_STATUS_CLOSED_COLOR, end_color=EXCEL_STATUS_CLOSED_COLOR, fill_type="solid")
     
-    ws.merge_cells('A3:G3')
+    ws.merge_cells('A3:H3')
     status_cell = ws['A3']
     status_cell.value = status_text
     status_cell.font = Font(bold=True, size=12, color="FFFFFF", name='Arial')
@@ -4191,7 +4002,7 @@ def generate_funeral_services_excel(request):
     ws.row_dimensions[4].height = 5
     
     # Заголовки таблицы
-    headers = ['№', 'ФИО ЗАЯВИТЕЛЯ', 'ИИН ЗАЯВИТЕЛЯ', 'СЧЕТ КАРТЫ', 'ФИО ПЕНСИОНЕРА', 'БАНК', 'К ВЫПЛАТЕ']
+    headers = ['№', 'ФИО ЗАЯВИТЕЛЯ', 'ИИН ЗАЯВИТЕЛЯ', 'СЧЕТ КАРТЫ', 'ФИО ПЕНСИОНЕРА', 'ДАТА СМЕРТИ', 'БАНК', 'К ВЫПЛАТЕ']
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=5, column=col_num)
         cell.value = header
@@ -4226,17 +4037,21 @@ def generate_funeral_services_excel(request):
         
         # ФИО пенсионера
         ws.cell(row=row_num, column=5, value=funeral_request.worker.full_name).alignment = left_alignment
+
+        # Дата смерти пенсионера
+        death_date = funeral_request.worker.death_date
+        ws.cell(row=row_num, column=6, value=death_date.strftime('%d.%m.%Y') if death_date else '').alignment = center_alignment
         
         # Банк (всегда Народный Банк)
-        ws.cell(row=row_num, column=6, value='Народный Банк').alignment = center_alignment
+        ws.cell(row=row_num, column=7, value='Народный Банк').alignment = center_alignment
         
         # К выплате
         to_pay_value = funeral_request.to_pay if funeral_request.to_pay else ''
-        ws.cell(row=row_num, column=7, value=to_pay_value).alignment = right_alignment
-        ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
+        ws.cell(row=row_num, column=8, value=to_pay_value).alignment = right_alignment
+        ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
         
         # Применяем границы
-        max_col = 7
+        max_col = 8
         for col in range(1, max_col + 1):
             ws.cell(row=row_num, column=col).border = border_style
         
@@ -4250,12 +4065,12 @@ def generate_funeral_services_excel(request):
     
     ws.cell(row=row_num, column=1, value='ИТОГО:').font = total_font
     ws.cell(row=row_num, column=1).alignment = right_alignment
-    ws.merge_cells(f'A{row_num}:F{row_num}')
-    ws.cell(row=row_num, column=7, value=total_to_pay).font = total_font
-    ws.cell(row=row_num, column=7).alignment = right_alignment
-    ws.cell(row=row_num, column=7).number_format = EXCEL_CURRENCY_FORMAT
+    ws.merge_cells(f'A{row_num}:G{row_num}')
+    ws.cell(row=row_num, column=8, value=total_to_pay).font = total_font
+    ws.cell(row=row_num, column=8).alignment = right_alignment
+    ws.cell(row=row_num, column=8).number_format = EXCEL_CURRENCY_FORMAT
     
-    max_col = 7
+    max_col = 8
     for col in range(1, max_col + 1):
         ws.cell(row=row_num, column=col).border = border_style
         ws.cell(row=row_num, column=col).fill = total_fill
@@ -4266,8 +4081,9 @@ def generate_funeral_services_excel(request):
     ws.column_dimensions['C'].width = 15  # ИИН ЗАЯВИТЕЛЯ
     ws.column_dimensions['D'].width = 25  # СЧЕТ КАРТЫ
     ws.column_dimensions['E'].width = 30  # ФИО ПЕНСИОНЕРА
-    ws.column_dimensions['F'].width = 18  # БАНК
-    ws.column_dimensions['G'].width = 15  # К ВЫПЛАТЕ
+    ws.column_dimensions['F'].width = 15  # ДАТА СМЕРТИ
+    ws.column_dimensions['G'].width = 18  # БАНК
+    ws.column_dimensions['H'].width = 15  # К ВЫПЛАТЕ
     
     # Высота строк
     ws.row_dimensions[1].height = 30

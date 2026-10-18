@@ -16,7 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { apiFetch } from '../lib/api';
-import { cn, formatCount, getErrorText, pluralRu, useIsMobile } from '../lib/utils';
+import { WORKER_CATEGORY_OPTIONS, cn, formatCount, getErrorText, pluralRu, useIsMobile } from '../lib/utils';
 import { Alert, Badge, Card, EmptyState, Field, Segmented, SkeletonRows, Spinner } from '../components/ui';
 
 const LIST_CONFIGS = {
@@ -265,6 +265,7 @@ export default function ListsTab({ user, references }) {
       return [
         ['№', 'number'],
         ['ФИО', 'full_name'],
+        ['Таб. №', 'personnel_number'],
         ['Статус работника', 'worker_status_display'],
         ['ИИН', 'inn'],
         ['Счет', 'account_number'],
@@ -296,6 +297,7 @@ export default function ListsTab({ user, references }) {
         ['ИИН заявителя', 'applicant_inn'],
         ['Счет', 'account_number'],
         ['Пенсионер', 'pensioner_full_name'],
+        ['Дата смерти', 'pensioner_death_date'],
         ['Статус работника', 'worker_status_display'],
         ['Банк', 'bank'],
         ['К выплате', 'to_pay'],
@@ -545,10 +547,11 @@ export default function ListsTab({ user, references }) {
 
           <Field label="Категория" className={cn(isMobile && !filtersOpen && 'is-hidden')}>
             <select value={workerCategory} onChange={(e) => setWorkerCategory(e.target.value)}>
-              <option value="all">Все</option>
-              <option value="workers">Работники</option>
-              <option value="pensioners">Пенсионеры</option>
-              <option value="regress">Регресс</option>
+              {WORKER_CATEGORY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </Field>
 

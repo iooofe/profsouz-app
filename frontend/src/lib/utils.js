@@ -66,6 +66,18 @@ export const ASSISTANCE_TYPE_OPTIONS = [
   { value: 'treatment', label: 'На лечение' },
 ];
 
+export const WORKER_CATEGORY_OPTIONS = [
+  { value: 'all', label: 'Все' },
+  { value: 'workers', label: 'Все работающие' },
+  { value: 'pensioners', label: 'Все пенсионеры' },
+  { value: 'regress', label: 'Все регрессники' },
+  { value: 'worker', label: 'Только работники' },
+  { value: 'pensioner', label: 'Только пенсионеры' },
+  { value: 'regressnik', label: 'Только регрессники' },
+  { value: 'regressnik_worker', label: 'Регрессники-работники' },
+  { value: 'regressnik_pensioner', label: 'Регрессники-пенсионеры' },
+];
+
 export const REPORT_TYPE_LABEL = {
   vacation: 'Путевка',
   material: 'Матпомощь',
