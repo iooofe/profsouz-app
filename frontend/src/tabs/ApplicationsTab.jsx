@@ -820,7 +820,7 @@ export default function ApplicationsTab({ user, activeType, onTypeChange }) {
               subtitle={
                 limits[0]?.period_start_human
                   ? `Период с ${limits[0].period_start_human}${
-                      energougol ? ` · ${subdivisionOptions.find((s) => s.value === limitSubdivision)?.label || ''}` : ''
+                      energougol ? `, ${subdivisionOptions.find((s) => s.value === limitSubdivision)?.label || ''}` : ''
                     }`
                   : 'Жартас и Шахтер, в койко-днях'
               }

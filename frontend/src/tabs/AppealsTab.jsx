@@ -105,8 +105,8 @@ export default function AppealsTab() {
                   <strong>{item.worker.full_name}</strong>
                   <span>
                     Таб. № {item.worker.personnel_number || '—'}
-                    {item.worker.department ? ` · ${item.worker.department}` : ''}
-                    {item.worker.user_account ? ` · ${item.worker.user_account}` : ''}
+                    {item.worker.department ? `, ${item.worker.department}` : ''}
+                    {item.worker.user_account ? `, ${item.worker.user_account}` : ''}
                   </span>
                 </div>
                 {item.worker.status_display && (

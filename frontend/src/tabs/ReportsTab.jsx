@@ -601,7 +601,7 @@ export default function ReportsTab({ user, references }) {
                     </span>
                     <span className="m-item-main">
                       <span className="m-item-sub">
-                        {meta?.label || row.type} · {row.created_at}
+                        {meta?.label || row.type}, {row.created_at}
                       </span>
                       <strong>{row.worker_name}</strong>
                       <span className="m-item-badges">
@@ -713,7 +713,7 @@ export default function ReportsTab({ user, references }) {
         size="sm"
         icon={REQUEST_TYPE_META[actionRow?.type]?.icon || FileStack}
         title={actionRow?.worker_name || 'Заявление'}
-        subtitle={actionRow ? `${REQUEST_TYPE_META[actionRow.type]?.label || ''} · ${actionRow.created_at}` : undefined}
+        subtitle={actionRow ? `${REQUEST_TYPE_META[actionRow.type]?.label || ''}, ${actionRow.created_at}` : undefined}
         bodyClassName="action-sheet"
       >
         {actionRow && (
@@ -778,7 +778,7 @@ export default function ReportsTab({ user, references }) {
         onClose={() => setDetailModalOpen(false)}
         size="lg"
         icon={detailMeta?.icon || FileStack}
-        title={detailData ? `${detailMeta?.label || 'Заявление'} · ${detailData.worker?.full_name || detailData._source?.worker_name || ''}` : 'Заявление'}
+        title={detailData ? `${detailMeta?.label || 'Заявление'}, ${detailData.worker?.full_name || detailData._source?.worker_name || ''}` : 'Заявление'}
         subtitle={detailData ? `№ ${detailData.id} от ${detailData.created_at}` : undefined}
         footer={
           detailData && (
@@ -982,7 +982,7 @@ export default function ReportsTab({ user, references }) {
         size="md"
         icon={editMeta?.icon || Pencil}
         title="Исправить заявление"
-        subtitle={editData ? `${editMeta?.label || ''} · ${editData.workerName || '—'} · № ${editData.id}` : undefined}
+        subtitle={editData ? `${editMeta?.label || ''}, ${editData.workerName || '—'}, № ${editData.id}` : undefined}
         footer={
           <>
             {editError && <div className="form-error foot-error">{editError}</div>}

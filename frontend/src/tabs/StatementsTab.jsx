@@ -124,11 +124,11 @@ export default function StatementsTab() {
                 <div className="statement-main">
                   <strong>{row.full_name}</strong>
                   <span>
-                    Таб. № {row.personnel_number || '—'} · ИИН {row.inn || '—'}
-                    {row.user_account ? ` · ${row.user_account}` : ''}
+                    Таб. № {row.personnel_number || '—'}, ИИН {row.inn || '—'}
+                    {row.user_account ? `, ${row.user_account}` : ''}
                   </span>
                   <span>
-                    {row.vouchers_count} {pluralRu(Number(row.vouchers_count) || 0, 'путевка', 'путевки', 'путевок')} ·{' '}
+                    {row.vouchers_count} {pluralRu(Number(row.vouchers_count) || 0, 'путевка', 'путевки', 'путевок')} ,{' '}
                     {row.bed_days} койко-дн.
                   </span>
                 </div>
@@ -187,17 +187,16 @@ export default function StatementsTab() {
       {error && <Alert tone="error">{error}</Alert>}
 
       <Card className="filter-card">
-        <div className="filter-row">
-          <div className="period-display">
-            <span className="period-icon">
-              <CalendarRange size={20} />
-            </span>
-            <div>
-              <span>{data?.custom_range ? 'Свой период' : 'Период ведомостей'}</span>
-              <strong>{data ? `${data.period_start_human} — ${data.period_end_human}` : '—'}</strong>
+        {data?.custom_range && (
+          <div className="filter-row">
+            <div className="period-display">
+              <div>
+                <span>Свой период</span>
+                <strong>{`${data.period_start_human} — ${data.period_end_human}`}</strong>
+              </div>
             </div>
           </div>
-        </div>
+        )}
         <div className="filter-grid">
           <div className="field">
             <span className="field-label">Период</span>

@@ -334,7 +334,7 @@ export default function WorkersTab({ user, references, onRefreshReference }) {
                   <strong>{worker.full_name}</strong>
                   <span className="m-item-sub">
                     {worker.position || 'Должность не указана'}
-                    {worker.personnel_number ? ` · Таб. № ${worker.personnel_number}` : ''}
+                    {worker.personnel_number ? `, Таб. № ${worker.personnel_number}` : ''}
                   </span>
                   <span className="m-item-badges">
                     <Badge tone={workerStatusTone(worker.status)}>{worker.status_display}</Badge>

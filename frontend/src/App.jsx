@@ -55,7 +55,7 @@ const NAV_GROUPS = [
 ];
 
 const TAB_META = {
-  dashboard: { title: 'Главная', description: 'Обзор вашего аккаунта и быстрые действия' },
+  dashboard: { title: 'Главная', description: '' },
   workers: { title: 'Работники', description: 'Работники и пенсионеры, их документы и члены семьи' },
   applications: {
     title: 'Новое заявление',
@@ -385,7 +385,7 @@ function Shell({ user, references, onLogout, onRefreshReference }) {
           </button>
           <div className="topbar-title">
             <h1>{meta.title}</h1>
-            <p>{meta.description}</p>
+            {meta.description && <p>{meta.description}</p>}
           </div>
           {activeTab !== 'more' && (
             <button type="button" className="topbar-avatar" onClick={() => navigate('more')} aria-label="Аккаунт и другие разделы">

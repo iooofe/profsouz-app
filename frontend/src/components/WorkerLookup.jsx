@@ -69,7 +69,7 @@ export default function WorkerLookup({ label, pensionerOnly = false, onSelect, s
             <strong>{selectedWorker.full_name}</strong>
             <span>
               Таб. № {selectedWorker.personnel_number || '—'}
-              {selectedWorker.department ? ` · ${selectedWorker.department}` : ''}
+              {selectedWorker.department ? `, ${selectedWorker.department}` : ''}
             </span>
           </div>
           {selectedWorker.status_display && (
@@ -115,7 +115,7 @@ export default function WorkerLookup({ label, pensionerOnly = false, onSelect, s
                       <strong>{worker.full_name}</strong>
                       <span>
                         Таб. № {worker.personnel_number || '—'}
-                        {worker.department ? ` · ${worker.department}` : ''}
+                        {worker.department ? `, ${worker.department}` : ''}
                       </span>
                     </span>
                     {worker.status_display && (
