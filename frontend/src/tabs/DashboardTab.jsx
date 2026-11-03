@@ -21,14 +21,6 @@ const QUICK_ACTIONS = [
   { type: 'funeral', title: 'Погребение', text: 'Выплата на погребение пенсионера', icon: Flower2, tone: 'violet' },
 ];
 
-function greeting() {
-  const hour = new Date().getHours();
-  if (hour < 5) return 'Доброй ночи';
-  if (hour < 12) return 'Доброе утро';
-  if (hour < 18) return 'Добрый день';
-  return 'Добрый вечер';
-}
-
 export default function DashboardTab({ user, onNavigate }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -63,9 +55,7 @@ export default function DashboardTab({ user, onNavigate }) {
     <div className="stack stack-lg">
       <div className="hero">
         <div>
-          <h2>
-            {greeting()}, {user.username}
-          </h2>
+          <h2>{user.username}</h2>
           <p>
             {new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
           </p>
